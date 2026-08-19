@@ -33,8 +33,8 @@ export interface Vec2 {
 export interface BallState {
   position: Vec2;
   velocity: Vec2;
-  spin: number; // -1 to 1 (left/right curve)
-  power: number; // 0 to 100
+  spin: number;
+  power: number;
   inFlight: boolean;
   trail: Vec2[];
 }
@@ -47,7 +47,7 @@ export interface GoalZone {
 }
 
 export interface GoalkeeperState {
-  position: Vec2; // -1 to 1 normalized within goal
+  position: Vec2;
   speed: number;
   direction: 1 | -1;
   diving: boolean;
@@ -56,17 +56,20 @@ export interface GoalkeeperState {
 
 export interface WallPlayer {
   id: number;
-  position: Vec2; // normalized 0-1 within wall area
-  number: number; // the multiplier number shown on them
+  position: Vec2;
+  number: number;
 }
 
 export interface MathChallenge {
   type: "multiplication" | "coordinate" | "angle" | "velocity";
   question: string;
   answer: number;
-  options?: number[]; // for multiple choice
-  timeLimit: number; // seconds
+  options?: number[];
+  timeLimit: number;
   hint?: string;
+  baseHint?: string;
+  assistanceStage?: "calm" | "hint" | "visual" | "urgent";
+  retryGranted?: boolean;
 }
 
 export interface ShotResult {
@@ -87,19 +90,19 @@ export interface LevelConfig {
   name: string;
   concept: MathConcept;
   description: string;
-  shotsRequired: number; // shots to win
-  shotsAllowed: number; // total shots before game over
+  shotsRequired: number;
+  shotsAllowed: number;
   hasKeeper: boolean;
-  keeperSpeed: number; // 0-1
+  keeperSpeed: number;
   hasWall: boolean;
   wallCount: number;
   gridVisible: boolean;
-  gridQuadrants: 1 | 4; // 1 = first quadrant only, 4 = all quadrants
+  gridQuadrants: 1 | 4;
   mathDifficulty: "easy" | "medium" | "hard";
   timeBonus: boolean;
   wind: boolean;
   windStrength: number;
-  stars: [number, number, number]; // shots needed for 1, 2, 3 stars
+  stars: [number, number, number];
   unlockCondition: string;
   rewards: LevelReward;
 }
@@ -137,12 +140,12 @@ export interface LevelProgress {
 }
 
 export interface AdaptiveDifficulty {
-  frustrationScore: number; // 0-100
-  avgResponseTime: number; // seconds
+  frustrationScore: number;
+  avgResponseTime: number;
   recentErrors: number[];
-  currentMultiplier: number; // 0.5 to 1.5 difficulty multiplier
+  currentMultiplier: number;
   hintsEnabled: boolean;
-  targetSizeMultiplier: number; // 0.5 to 1.5
+  targetSizeMultiplier: number;
 }
 
 export interface GameState {
@@ -175,7 +178,7 @@ export interface Particle {
   vy: number;
   color: string;
   size: number;
-  life: number; // 0-1
+  life: number;
   maxLife: number;
   type: "confetti" | "star" | "spark" | "smoke" | "coin";
 }
@@ -196,6 +199,8 @@ export type GameAction =
   | { type: "START_LEVEL"; levelId: number }
   | { type: "SET_TARGET"; coord: Vec2 }
   | { type: "SUBMIT_MATH"; answer: number }
+  | { type: "MATH_ASSISTANCE"; stage: "hint" | "visual" | "urgent" }
+  | { type: "GRANT_MATH_RETRY"; seconds: number }
   | { type: "SHOOT" }
   | { type: "SHOT_COMPLETE"; result: ShotResult }
   | { type: "NEXT_SHOT" }
