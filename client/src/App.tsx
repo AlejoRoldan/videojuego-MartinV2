@@ -15,6 +15,7 @@ import DefeatScreen from "./game/screens/DefeatScreen";
 import ProgressScreen from "./game/screens/ProgressScreen";
 import ProfileScreen from "./game/screens/ProfileScreen";
 import TutorialScreen from "./game/screens/TutorialScreen";
+import MathPowerOverlay from "./game/screens/MathPowerOverlay";
 import { AnimatePresence, motion } from "framer-motion";
 import ErrorBoundary from "./components/ErrorBoundary";
 
@@ -58,6 +59,7 @@ function GameRouter() {
           {screenMap[state.screen] ?? <HomeScreen />}
         </motion.div>
       </AnimatePresence>
+      <MathPowerOverlay />
     </div>
   );
 }
