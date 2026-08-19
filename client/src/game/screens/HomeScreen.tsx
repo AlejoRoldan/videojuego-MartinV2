@@ -4,18 +4,33 @@
 // =============================================================
 
 import { motion } from "framer-motion";
+import { useState } from "react";
 import { useGame } from "../engine/GameContext";
 import { sounds } from "../engine/soundSystem";
+import {
+  GAME_PACE_CONFIG,
+  loadGamePace,
+  saveGamePace,
+  type GamePace,
+} from "../engine/gamePace";
 
 const HOME_BG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663638628604/YvKFUvGtEph4XyT2Rde5AJ/game-home-bg-KNACZmxggfLAynjyvZYg3e.webp";
 const PLAYER_IMG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663638628604/YvKFUvGtEph4XyT2Rde5AJ/game-player-SZu757xkaDBb7ZA9f4TAtJ.webp";
+const GAME_PACES: GamePace[] = ["easy", "medium", "hard"];
 
 export default function HomeScreen() {
   const { goToScreen, playerProfile } = useGame();
+  const [gamePace, setGamePace] = useState<GamePace>(loadGamePace);
 
   const handleNav = (screen: Parameters<typeof goToScreen>[0]) => {
     sounds.click();
     goToScreen(screen);
+  };
+
+  const handlePaceChange = (pace: GamePace) => {
+    sounds.click();
+    setGamePace(pace);
+    saveGamePace(pace);
   };
 
   return (
@@ -23,21 +38,18 @@ export default function HomeScreen() {
       className="relative w-full h-full overflow-hidden flex flex-col items-center justify-between"
       style={{ minHeight: "100dvh" }}
     >
-      {/* Background */}
       <div
         className="absolute inset-0 bg-cover bg-center"
         style={{ backgroundImage: `url(${HOME_BG})` }}
       />
       <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/60" />
 
-      {/* Top HUD bar */}
       <motion.div
         initial={{ y: -80, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ duration: 0.5, ease: [0.23, 1, 0.32, 1] }}
         className="relative z-10 w-full flex items-center justify-between px-4 pt-4"
       >
-        {/* Player info */}
         <div
           className="flex items-center gap-2 px-3 py-2 rounded-2xl"
           style={{
@@ -58,16 +70,13 @@ export default function HomeScreen() {
           </div>
         </div>
 
-        {/* Stats */}
         <div className="flex items-center gap-2">
           <StatBadge icon="⭐" value={playerProfile.stars} color="#FFD700" />
           <StatBadge icon="🪙" value={playerProfile.coins} color="#FFA502" />
         </div>
       </motion.div>
 
-      {/* Center: Logo + Player */}
-      <div className="relative z-10 flex flex-col items-center gap-0 mt-4">
-        {/* Logo */}
+      <div className="relative z-10 flex flex-col items-center gap-0 mt-2">
         <motion.div
           initial={{ scale: 0.5, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
@@ -96,7 +105,6 @@ export default function HomeScreen() {
           >
             MATEMÁTICO
           </div>
-          {/* Stars decoration */}
           <div className="flex justify-center gap-1 mt-1">
             {[...Array(5)].map((_, i) => (
               <motion.span
@@ -111,31 +119,72 @@ export default function HomeScreen() {
           </div>
         </motion.div>
 
-        {/* Player character */}
         <motion.img
           src={PLAYER_IMG}
           alt="Jugador"
           initial={{ y: 50, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           transition={{ duration: 0.6, delay: 0.3, ease: [0.23, 1, 0.32, 1] }}
-          className="w-40 h-auto drop-shadow-2xl"
+          className="w-32 h-auto drop-shadow-2xl"
           style={{ filter: "drop-shadow(0 8px 16px rgba(0,0,0,0.5))" }}
         />
       </div>
 
-      {/* Bottom: Buttons */}
       <motion.div
         initial={{ y: 80, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ duration: 0.5, delay: 0.4, ease: [0.23, 1, 0.32, 1] }}
-        className="relative z-10 w-full max-w-sm px-4 pb-8 flex flex-col gap-3"
+        className="relative z-10 w-full max-w-sm px-4 pb-6 flex flex-col gap-2"
       >
-        {/* JUGAR button */}
+        <div
+          className="rounded-2xl px-3 py-2"
+          style={{
+            background: "rgba(5, 12, 28, 0.82)",
+            border: "2px solid rgba(255,255,255,0.2)",
+            boxShadow: "0 4px 14px rgba(0,0,0,0.3)",
+          }}
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-white font-black text-xs">⏱ TIEMPO PARA PENSAR</span>
+            <span className="text-white/70 text-[10px]">Puedes cambiarlo cuando quieras</span>
+          </div>
+
+          <div className="grid grid-cols-3 gap-1.5">
+            {GAME_PACES.map((pace) => {
+              const selected = pace === gamePace;
+              const icon = pace === "easy" ? "😌" : pace === "medium" ? "⚡" : "🔥";
+              return (
+                <motion.button
+                  key={pace}
+                  whileTap={{ scale: 0.94 }}
+                  onPointerDown={() => handlePaceChange(pace)}
+                  aria-pressed={selected}
+                  className="rounded-xl py-2 px-1 flex flex-col items-center justify-center"
+                  style={{
+                    background: selected ? "#FFD700" : "rgba(255,255,255,0.1)",
+                    border: selected ? "2px solid white" : "2px solid rgba(255,255,255,0.12)",
+                    color: selected ? "#231900" : "white",
+                    boxShadow: selected ? "0 3px 0 #B8860B" : "none",
+                    touchAction: "manipulation",
+                  }}
+                >
+                  <span className="text-lg leading-none">{icon}</span>
+                  <span className="text-[11px] font-black mt-1">{GAME_PACE_CONFIG[pace].label}</span>
+                </motion.button>
+              );
+            })}
+          </div>
+
+          <div className="text-center text-white/75 text-[10px] mt-1.5">
+            {GAME_PACE_CONFIG[gamePace].description}
+          </div>
+        </div>
+
         <motion.button
           whileTap={{ scale: 0.95 }}
           whileHover={{ scale: 1.03 }}
           onPointerDown={() => handleNav("level-select")}
-          className="w-full py-4 rounded-2xl font-black text-2xl text-white flex items-center justify-center gap-3"
+          className="w-full py-3 rounded-2xl font-black text-2xl text-white flex items-center justify-center gap-3"
           style={{
             fontFamily: "'Fredoka One', cursive",
             background: "linear-gradient(180deg, #FF6B35 0%, #E55A2B 100%)",
@@ -148,7 +197,6 @@ export default function HomeScreen() {
           ⚽ JUGAR
         </motion.button>
 
-        {/* Secondary buttons */}
         <div className="flex gap-3">
           <SecondaryButton
             icon="🏆"
@@ -171,7 +219,6 @@ export default function HomeScreen() {
         </div>
       </motion.div>
 
-      {/* Floating math symbols decoration */}
       <FloatingMathSymbols />
     </div>
   );
@@ -209,19 +256,19 @@ function SecondaryButton({
       whileTap={{ scale: 0.93 }}
       whileHover={{ scale: 1.05 }}
       onPointerDown={onClick}
-      className="flex-1 py-3 rounded-xl font-black text-white flex flex-col items-center gap-1"
+      className="flex-1 py-2.5 rounded-xl font-black text-white flex flex-col items-center gap-1"
       style={{
         fontFamily: "'Fredoka One', cursive",
         background: `linear-gradient(180deg, ${color} 0%, ${color}CC 100%)`,
         border: "3px solid rgba(255,255,255,0.3)",
-        boxShadow: `0 4px 0 rgba(0,0,0,0.3)`,
+        boxShadow: "0 4px 0 rgba(0,0,0,0.3)",
         fontSize: "11px",
         transition: "all 0.15s cubic-bezier(0.23, 1, 0.32, 1)",
         touchAction: "manipulation",
-        minHeight: "60px",
+        minHeight: "54px",
       }}
     >
-      <span className="text-xl">{icon}</span>
+      <span className="text-lg">{icon}</span>
       {label}
     </motion.button>
   );
