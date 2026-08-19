@@ -49,6 +49,40 @@ describe("game reducer", () => {
     expect(state.ball.power).toBe(80);
   });
 
+  it("enables a small hint without changing the math question", () => {
+    let state = gameReducer(initialGameState, { type: "START_LEVEL", levelId: 3 });
+    state = gameReducer(state, { type: "SET_TARGET", coord: { x: 1, y: 1 } });
+    const question = state.currentChallenge?.question;
+    state = gameReducer(state, { type: "MATH_ASSISTANCE", stage: "hint" });
+    expect(state.adaptiveDifficulty.hintsEnabled).toBe(true);
+    expect(state.currentChallenge?.question).toBe(question);
+    expect(state.currentChallenge?.assistanceStage).toBe("hint");
+  });
+
+  it("strengthens the hint as assistance becomes visual and urgent", () => {
+    let state = gameReducer(initialGameState, { type: "START_LEVEL", levelId: 3 });
+    state = gameReducer(state, { type: "SET_TARGET", coord: { x: 1, y: 1 } });
+    state = gameReducer(state, { type: "MATH_ASSISTANCE", stage: "visual" });
+    expect(state.currentChallenge?.hint).toContain("Mira las opciones");
+    state = gameReducer(state, { type: "MATH_ASSISTANCE", stage: "urgent" });
+    expect(state.currentChallenge?.hint).toContain("estima primero");
+  });
+
+  it("grants a single retry with a new short timer and visible coaching", () => {
+    let state = gameReducer(initialGameState, { type: "START_LEVEL", levelId: 3 });
+    state = gameReducer(state, { type: "SET_TARGET", coord: { x: 1, y: 1 } });
+    state = gameReducer(state, { type: "GRANT_MATH_RETRY", seconds: 5 });
+    expect(state.phase).toBe("math");
+    expect(state.currentChallenge?.retryGranted).toBe(true);
+    expect(state.currentChallenge?.timeLimit).toBe(5);
+    expect(state.currentChallenge?.question).toMatch(/^💡 Segunda oportunidad:/);
+    expect(state.adaptiveDifficulty.hintsEnabled).toBe(true);
+
+    const once = state;
+    state = gameReducer(state, { type: "GRANT_MATH_RETRY", seconds: 5 });
+    expect(state).toBe(once);
+  });
+
   it("persists adaptive difficulty after repeated wrong answers", () => {
     vi.spyOn(Math, "random").mockReturnValue(0.5);
     let state = gameReducer(initialGameState, { type: "START_LEVEL", levelId: 3 });
