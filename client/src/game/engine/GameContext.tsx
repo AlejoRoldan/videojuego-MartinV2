@@ -54,6 +54,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   const shootTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mathSubmitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const assistanceTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
+  const mathStartedAtRef = useRef<number | null>(null);
   const inFlightRef = useRef(false);
 
   const clearAssistanceTimers = useCallback(() => {
@@ -88,20 +89,22 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       const retrySeconds = getRetrySeconds(pace, Boolean(s.currentChallenge.retryGranted));
       if (retrySeconds > 0) {
         clearAssistanceTimers();
+        mathStartedAtRef.current = Date.now();
         dispatch({ type: "GRANT_MATH_RETRY", seconds: retrySeconds });
         return;
       }
     }
 
+    const elapsedSeconds = mathStartedAtRef.current === null ? 0 : (Date.now() - mathStartedAtRef.current) / 1000;
+    const derivedTimeLeft = s.currentChallenge
+      ? Math.max(0, s.currentChallenge.timeLimit - elapsedSeconds)
+      : undefined;
+    const effectiveTimeLeft = timeLeft ?? derivedTimeLeft;
+
     clearAssistanceTimers();
-    dispatch({
-      type: "SUBMIT_MATH",
-      answer,
-      timeLeft,
-      usedRetry: usedRetry ?? s.currentChallenge?.retryGranted ?? false,
-    });
+    mathStartedAtRef.current = null;
+    dispatch({ type: "SUBMIT_MATH", answer, timeLeft: effectiveTimeLeft, usedRetry: usedRetry ?? s.currentChallenge?.retryGranted ?? false });
     if (mathSubmitTimerRef.current) clearTimeout(mathSubmitTimerRef.current);
-    // Give the Math Power badge a moment to land before the kick.
     mathSubmitTimerRef.current = setTimeout(() => {
       if (inFlightRef.current) return;
       inFlightRef.current = true;
@@ -111,13 +114,17 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     clearAssistanceTimers();
-    if (state.phase !== "math" || !state.currentChallenge || state.currentChallenge.retryGranted) return;
+    if (state.phase !== "math" || !state.currentChallenge) {
+      mathStartedAtRef.current = null;
+      return;
+    }
+    mathStartedAtRef.current = Date.now();
+    if (state.currentChallenge.retryGranted) return;
     const timeLimit = state.currentChallenge.timeLimit;
     const initialStage = getMathAssistanceStage(timeLimit);
     if (initialStage === "hint") dispatch({ type: "MATH_ASSISTANCE", stage: "hint" });
     if (initialStage === "visual") dispatch({ type: "MATH_ASSISTANCE", stage: "visual" });
     if (initialStage === "urgent") dispatch({ type: "MATH_ASSISTANCE", stage: "urgent" });
-
     const scheduleStage = (stage: "hint" | "visual" | "urgent", remainingSeconds: number) => {
       if (timeLimit <= remainingSeconds) return;
       const timer = setTimeout(() => {
@@ -149,9 +156,9 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         const next = { ...prev, totalGoals: prev.totalGoals + (result.scored ? 1 : 0), totalShots: prev.totalShots + 1 };
         saveProfile(next); return next;
       });
-    }, 1200);
+    }, state.currentMathPower === "perfect" ? 1500 : state.currentMathPower === "turbo" ? 900 : 1200);
     return () => { if (shootTimerRef.current) clearTimeout(shootTimerRef.current); };
-  }, [state.phase, state.ball.inFlight]);
+  }, [state.phase, state.ball.inFlight, state.currentMathPower]);
 
   useEffect(() => { if (state.phase === "aiming") inFlightRef.current = false; }, [state.phase]);
   useEffect(() => {
