@@ -1,6 +1,6 @@
 // =============================================================
-// TIRO LIBRE MATEMÁTICO — Game Context v2
-// FIXES: shoot flow race condition, sound triggers, state sync
+// TIRO LIBRE MATEMÁTICO — Game Context v3
+// Coordinates gameplay flow, progressive math assistance and retries
 // =============================================================
 
 import React, { createContext, useContext, useReducer, useCallback, useRef, useEffect, useState } from "react";
@@ -8,6 +8,12 @@ import type { GameState, GameAction, Vec2 } from "./types";
 import { gameReducer, initialGameState } from "./gameReducer";
 import { resolveShotResult } from "./physics";
 import { sounds } from "./soundSystem";
+import {
+  ASSISTANCE_THRESHOLDS,
+  getMathAssistanceStage,
+  getRetrySeconds,
+  loadGamePace,
+} from "./gamePace";
 
 interface PlayerProfile {
   name: string;
@@ -69,13 +75,18 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(gameReducer, initialGameState);
   const [playerProfile, setPlayerProfile] = useState<PlayerProfile>(loadProfile);
 
-  // Always-current ref to state — avoids stale closure bugs
   const stateRef = useRef(state);
   stateRef.current = state;
 
   const shootTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mathSubmitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const assistanceTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const inFlightRef = useRef(false);
+
+  const clearAssistanceTimers = useCallback(() => {
+    assistanceTimersRef.current.forEach(clearTimeout);
+    assistanceTimersRef.current = [];
+  }, []);
 
   const updateProfile = useCallback((updates: Partial<PlayerProfile>) => {
     setPlayerProfile((prev) => {
@@ -91,12 +102,10 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
 
   const startLevel = useCallback((levelId: number) => {
     inFlightRef.current = false;
+    clearAssistanceTimers();
     dispatch({ type: "START_LEVEL", levelId });
-  }, []);
+  }, [clearAssistanceTimers]);
 
-  // setTarget: records the aiming coordinate.
-  // For "directions" concept: immediately triggers shoot after short delay.
-  // For other concepts: transitions to "math" phase.
   const setTarget = useCallback((coord: Vec2) => {
     dispatch({ type: "SET_TARGET", coord });
     const s = stateRef.current;
@@ -107,16 +116,29 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  // shoot: transitions ball to inFlight.
-  // The useEffect below watches for inFlight and resolves the shot.
   const shoot = useCallback(() => {
     if (inFlightRef.current) return;
     inFlightRef.current = true;
     dispatch({ type: "SHOOT" });
   }, []);
 
-  // submitMath: records math answer, then triggers shoot after animation delay
+  // A timeout uses -999 as the existing sentinel from GameplayScreen.
+  // Easy/medium modes consume one grace retry instead of converting that timeout into an error.
   const submitMath = useCallback((answer: number) => {
+    const s = stateRef.current;
+
+    if (answer === -999 && s.phase === "math" && s.currentChallenge) {
+      const pace = loadGamePace();
+      const retrySeconds = getRetrySeconds(pace, Boolean(s.currentChallenge.retryGranted));
+
+      if (retrySeconds > 0) {
+        clearAssistanceTimers();
+        dispatch({ type: "GRANT_MATH_RETRY", seconds: retrySeconds });
+        return;
+      }
+    }
+
+    clearAssistanceTimers();
     dispatch({ type: "SUBMIT_MATH", answer });
     if (mathSubmitTimerRef.current) clearTimeout(mathSubmitTimerRef.current);
     mathSubmitTimerRef.current = setTimeout(() => {
@@ -124,22 +146,60 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       inFlightRef.current = true;
       dispatch({ type: "SHOOT" });
     }, 500);
-  }, []);
+  }, [clearAssistanceTimers]);
 
-  // Resolve shot when ball enters flight
+  // Progressive learning assistance: calm play first, then a hint at 15s,
+  // stronger visual guidance at 8s and an urgent coaching hint at 5s.
+  useEffect(() => {
+    clearAssistanceTimers();
+
+    if (state.phase !== "math" || !state.currentChallenge) return;
+    if (state.currentChallenge.retryGranted) return;
+
+    const timeLimit = state.currentChallenge.timeLimit;
+    const initialStage = getMathAssistanceStage(timeLimit);
+
+    if (initialStage === "hint") dispatch({ type: "MATH_ASSISTANCE", stage: "hint" });
+    if (initialStage === "visual") dispatch({ type: "MATH_ASSISTANCE", stage: "visual" });
+    if (initialStage === "urgent") dispatch({ type: "MATH_ASSISTANCE", stage: "urgent" });
+
+    const scheduleStage = (
+      stage: "hint" | "visual" | "urgent",
+      remainingSeconds: number
+    ) => {
+      if (timeLimit <= remainingSeconds) return;
+      const timer = setTimeout(() => {
+        const current = stateRef.current;
+        if (current.phase === "math" && !current.currentChallenge?.retryGranted) {
+          dispatch({ type: "MATH_ASSISTANCE", stage });
+        }
+      }, (timeLimit - remainingSeconds) * 1000);
+      assistanceTimersRef.current.push(timer);
+    };
+
+    scheduleStage("hint", ASSISTANCE_THRESHOLDS.hint);
+    scheduleStage("visual", ASSISTANCE_THRESHOLDS.visual);
+    scheduleStage("urgent", ASSISTANCE_THRESHOLDS.urgent);
+
+    return clearAssistanceTimers;
+  }, [
+    state.phase,
+    state.currentChallenge?.question,
+    state.currentChallenge?.timeLimit,
+    state.currentChallenge?.retryGranted,
+    clearAssistanceTimers,
+  ]);
+
   useEffect(() => {
     if (state.phase !== "shooting" || !state.ball.inFlight) return;
     if (!state.targetCoord || !state.levelConfig) return;
 
     if (shootTimerRef.current) clearTimeout(shootTimerRef.current);
 
-    // Wait for ball animation to play (~1.2s) then resolve
     shootTimerRef.current = setTimeout(() => {
       const s = stateRef.current;
       if (!s.targetCoord || !s.levelConfig) return;
 
-      // Determine if math was answered correctly based on power
-      // Power > 70 = correct answer was given
       const mathCorrect = s.ball.power > 70;
 
       const result = resolveShotResult(
@@ -158,7 +218,6 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
 
       dispatch({ type: "SHOT_COMPLETE", result });
 
-      // Update player stats
       setPlayerProfile((prev) => {
         const next = {
           ...prev,
@@ -175,14 +234,12 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     };
   }, [state.phase, state.ball.inFlight]);
 
-  // Reset inFlightRef when phase returns to aiming
   useEffect(() => {
     if (state.phase === "aiming") {
       inFlightRef.current = false;
     }
   }, [state.phase]);
 
-  // Particle tick loop
   useEffect(() => {
     if (state.particles.length === 0 && state.floatingTexts.length === 0) return;
     const id = setInterval(() => {
@@ -190,6 +247,14 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     }, 50);
     return () => clearInterval(id);
   }, [state.particles.length, state.floatingTexts.length]);
+
+  useEffect(() => {
+    return () => {
+      clearAssistanceTimers();
+      if (mathSubmitTimerRef.current) clearTimeout(mathSubmitTimerRef.current);
+      if (shootTimerRef.current) clearTimeout(shootTimerRef.current);
+    };
+  }, [clearAssistanceTimers]);
 
   const nextShot = useCallback(() => {
     const s = stateRef.current;
@@ -248,8 +313,9 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
 
   const resetGame = useCallback(() => {
     inFlightRef.current = false;
+    clearAssistanceTimers();
     dispatch({ type: "RESET_GAME" });
-  }, []);
+  }, [clearAssistanceTimers]);
 
   return (
     <GameContext.Provider
