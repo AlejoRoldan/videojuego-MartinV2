@@ -25,6 +25,9 @@ export type MathConcept =
   | "velocity"
   | "tactics";
 
+export type MathChallengeType = "multiplication" | "coordinate" | "angle" | "velocity";
+export type MathPower = "precision" | "curve" | "turbo" | "perfect" | null;
+
 export interface Vec2 {
   x: number;
   y: number;
@@ -61,7 +64,7 @@ export interface WallPlayer {
 }
 
 export interface MathChallenge {
-  type: "multiplication" | "coordinate" | "angle" | "velocity";
+  type: MathChallengeType;
   question: string;
   answer: number;
   options?: number[];
@@ -168,6 +171,7 @@ export interface GameState {
   adaptiveDifficulty: AdaptiveDifficulty;
   particles: Particle[];
   floatingTexts: FloatingText[];
+  currentMathPower: MathPower;
 }
 
 export interface Particle {
@@ -198,7 +202,7 @@ export type GameAction =
   | { type: "SET_SCREEN"; screen: GameScreen }
   | { type: "START_LEVEL"; levelId: number }
   | { type: "SET_TARGET"; coord: Vec2 }
-  | { type: "SUBMIT_MATH"; answer: number }
+  | { type: "SUBMIT_MATH"; answer: number; timeLeft?: number; usedRetry?: boolean }
   | { type: "MATH_ASSISTANCE"; stage: "hint" | "visual" | "urgent" }
   | { type: "GRANT_MATH_RETRY"; seconds: number }
   | { type: "SHOOT" }
