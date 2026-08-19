@@ -4,6 +4,7 @@
 // =============================================================
 
 import type { MathChallenge, LevelConfig, Vec2 } from "../engine/types";
+import { getConfiguredTimeLimit } from "../engine/gamePace";
 
 function randomInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -134,9 +135,9 @@ function angleChallenge(difficulty: "easy" | "medium" | "hard"): MathChallenge {
 }
 
 function velocityChallenge(difficulty: "easy" | "medium" | "hard"): MathChallenge {
-  const speed = randomInt(2, 10); // m/s
-  const time = randomInt(2, 5);   // s
-  const distance = speed * time;  // m
+  const speed = randomInt(2, 10);
+  const time = randomInt(2, 5);
+  const distance = speed * time;
 
   const questions = [
     {
@@ -164,24 +165,25 @@ function velocityChallenge(difficulty: "easy" | "medium" | "hard"): MathChalleng
 
 export function generateChallenge(level: LevelConfig): MathChallenge {
   const { concept, mathDifficulty, gridQuadrants } = level;
+  let challenge: MathChallenge;
 
   switch (concept) {
     case "multiplication":
     case "tactics":
-      return multiplicationChallenge(mathDifficulty);
-
+      challenge = multiplicationChallenge(mathDifficulty);
+      break;
     case "coordinates":
     case "cartesian":
-      return coordinateChallenge(mathDifficulty, gridQuadrants);
-
+      challenge = coordinateChallenge(mathDifficulty, gridQuadrants);
+      break;
     case "angles":
-      return angleChallenge(mathDifficulty);
-
+      challenge = angleChallenge(mathDifficulty);
+      break;
     case "velocity":
-      return velocityChallenge(mathDifficulty);
-
+      challenge = velocityChallenge(mathDifficulty);
+      break;
     case "directions":
-      return {
+      challenge = {
         type: "coordinate",
         question: "¿A qué lado de la portería quieres apuntar?",
         answer: 1,
@@ -189,15 +191,20 @@ export function generateChallenge(level: LevelConfig): MathChallenge {
         timeLimit: 20,
         hint: "Haz clic en la portería donde quieres que entre el balón",
       };
-
+      break;
     case "trajectories":
-      return Math.random() > 0.5
+      challenge = Math.random() > 0.5
         ? multiplicationChallenge(mathDifficulty)
         : angleChallenge(mathDifficulty);
-
+      break;
     default:
-      return multiplicationChallenge(mathDifficulty);
+      challenge = multiplicationChallenge(mathDifficulty);
   }
+
+  return {
+    ...challenge,
+    timeLimit: getConfiguredTimeLimit(challenge.timeLimit),
+  };
 }
 
 export function calculatePowerFromMath(
