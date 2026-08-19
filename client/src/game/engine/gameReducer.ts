@@ -151,6 +151,10 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         phase: "aiming",
         targetCoord: null,
         lastShotResult: null,
+        adaptiveDifficulty: {
+          ...state.adaptiveDifficulty,
+          hintsEnabled: false,
+        },
         particles: [],
         floatingTexts: [],
       };
@@ -163,6 +167,10 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         targetCoord: action.coord,
         phase: skipMath ? "aiming" : "math",
         ball: skipMath ? { ...state.ball, power: 80 } : state.ball,
+        adaptiveDifficulty: {
+          ...state.adaptiveDifficulty,
+          hintsEnabled: false,
+        },
       };
     }
 
@@ -195,6 +203,55 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
           targetSizeMultiplier: adaptive.targetSizeMultiplier,
         },
         floatingTexts: [...state.floatingTexts, ...floatingTexts],
+      };
+    }
+
+    case "MATH_ASSISTANCE": {
+      if (!state.currentChallenge || state.phase !== "math") return state;
+
+      const baseHint = state.currentChallenge.baseHint ?? state.currentChallenge.hint ?? "Mira con calma la operación";
+      const hint = action.stage === "hint"
+        ? baseHint
+        : action.stage === "visual"
+          ? `👀 ${baseHint}. Mira las opciones y descarta las que no pueden ser.`
+          : `⭐ ${baseHint}. Tómate un segundo: estima primero y luego elige.`;
+
+      return {
+        ...state,
+        currentChallenge: {
+          ...state.currentChallenge,
+          baseHint,
+          hint,
+          assistanceStage: action.stage,
+        },
+        adaptiveDifficulty: {
+          ...state.adaptiveDifficulty,
+          hintsEnabled: true,
+        },
+      };
+    }
+
+    case "GRANT_MATH_RETRY": {
+      if (!state.currentChallenge || state.phase !== "math" || state.currentChallenge.retryGranted) return state;
+
+      const originalQuestion = state.currentChallenge.question.replace(/^💡 Segunda oportunidad: /, "");
+      const baseHint = state.currentChallenge.baseHint ?? state.currentChallenge.hint ?? "Piensa paso a paso";
+
+      return {
+        ...state,
+        currentChallenge: {
+          ...state.currentChallenge,
+          question: `💡 Segunda oportunidad: ${originalQuestion}`,
+          timeLimit: Math.max(1, action.seconds),
+          baseHint,
+          hint: `Sin presión: ${baseHint}`,
+          assistanceStage: "urgent",
+          retryGranted: true,
+        },
+        adaptiveDifficulty: {
+          ...state.adaptiveDifficulty,
+          hintsEnabled: true,
+        },
       };
     }
 
@@ -289,6 +346,10 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         targetCoord: null,
         lastShotResult: null,
         ball: createInitialBall(),
+        adaptiveDifficulty: {
+          ...state.adaptiveDifficulty,
+          hintsEnabled: false,
+        },
         floatingTexts: [],
       };
     }
