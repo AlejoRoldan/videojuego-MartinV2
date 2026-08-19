@@ -6,6 +6,7 @@
 import type { GameState, GameAction, BallState, GoalkeeperState, Particle, FloatingText } from "./types";
 import { getLevelById } from "../levels/levelData";
 import { generateChallenge, updateAdaptiveDifficulty } from "../math/mathEngine";
+import { MATH_POWER_META, selectMathPower } from "./mathPowers";
 import { nanoid } from "nanoid";
 
 function createInitialBall(): BallState {
@@ -67,16 +68,7 @@ function createFloatingText(
   color: string,
   size: FloatingText["size"] = "lg"
 ): FloatingText {
-  return {
-    id: nanoid(),
-    text,
-    x,
-    y,
-    color,
-    size,
-    life: 1,
-    maxLife: 1,
-  };
+  return { id: nanoid(), text, x, y, color, size, life: 1, maxLife: 1 };
 }
 
 export const initialGameState: GameState = {
@@ -106,6 +98,7 @@ export const initialGameState: GameState = {
   },
   particles: [],
   floatingTexts: [],
+  currentMathPower: null,
 };
 
 export function gameReducer(state: GameState, action: GameAction): GameState {
@@ -116,30 +109,21 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
     case "START_LEVEL": {
       const config = getLevelById(action.levelId);
       if (!config) return state;
-
       const wall = config.hasWall
         ? Array.from({ length: config.wallCount }, (_, i) => ({
             id: i,
-            position: {
-              x: 0.2 + (i / (config.wallCount - 1 || 1)) * 0.6,
-              y: 0.5,
-            },
+            position: { x: 0.2 + (i / (config.wallCount - 1 || 1)) * 0.6, y: 0.5 },
             number: Math.floor(Math.random() * 8) + 2,
           }))
         : [];
-
       const challenge = generateChallenge(config);
-
       return {
         ...state,
         screen: "gameplay",
         currentLevel: action.levelId,
         levelConfig: config,
         ball: createInitialBall(),
-        goalkeeper: {
-          ...createInitialKeeper(),
-          speed: config.keeperSpeed,
-        },
+        goalkeeper: { ...createInitialKeeper(), speed: config.keeperSpeed },
         wall,
         currentChallenge: challenge,
         shotsScored: 0,
@@ -151,12 +135,10 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         phase: "aiming",
         targetCoord: null,
         lastShotResult: null,
-        adaptiveDifficulty: {
-          ...state.adaptiveDifficulty,
-          hintsEnabled: false,
-        },
+        adaptiveDifficulty: { ...state.adaptiveDifficulty, hintsEnabled: false },
         particles: [],
         floatingTexts: [],
+        currentMathPower: null,
       };
     }
 
@@ -167,10 +149,8 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         targetCoord: action.coord,
         phase: skipMath ? "aiming" : "math",
         ball: skipMath ? { ...state.ball, power: 80 } : state.ball,
-        adaptiveDifficulty: {
-          ...state.adaptiveDifficulty,
-          hintsEnabled: false,
-        },
+        adaptiveDifficulty: { ...state.adaptiveDifficulty, hintsEnabled: false },
+        currentMathPower: null,
       };
     }
 
@@ -178,6 +158,14 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       if (!state.currentChallenge || !state.levelConfig) return state;
       const correct = action.answer === state.currentChallenge.answer;
       const newPower = correct ? 85 + Math.random() * 15 : 45 + Math.random() * 20;
+      const mathPower = correct
+        ? selectMathPower(
+            state.currentChallenge.type,
+            action.timeLeft,
+            state.currentChallenge.timeLimit,
+            action.usedRetry ?? state.currentChallenge.retryGranted ?? false
+          )
+        : null;
 
       const newErrors = [...state.adaptiveDifficulty.recentErrors, correct ? 0 : 1];
       const adaptive = updateAdaptiveDifficulty(
@@ -187,9 +175,11 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         state.currentChallenge.timeLimit
       );
 
-      const floatingTexts = correct
-        ? [createFloatingText("¡CORRECTO! +PODER", 0.5, 0.5, "#7BED9F", "lg")]
-        : [createFloatingText("Respuesta incorrecta", 0.5, 0.5, "#FF4757", "md")];
+      const floatingTexts = correct && mathPower
+        ? [createFloatingText(`${MATH_POWER_META[mathPower].icon} ${MATH_POWER_META[mathPower].label}`, 0.5, 0.48, "#FFD700", "lg")]
+        : correct
+          ? [createFloatingText("¡CORRECTO! +PODER", 0.5, 0.5, "#7BED9F", "lg")]
+          : [createFloatingText("Respuesta incorrecta", 0.5, 0.5, "#FF4757", "md")];
 
       return {
         ...state,
@@ -203,40 +193,29 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
           targetSizeMultiplier: adaptive.targetSizeMultiplier,
         },
         floatingTexts: [...state.floatingTexts, ...floatingTexts],
+        currentMathPower: mathPower,
       };
     }
 
     case "MATH_ASSISTANCE": {
       if (!state.currentChallenge || state.phase !== "math") return state;
-
       const baseHint = state.currentChallenge.baseHint ?? state.currentChallenge.hint ?? "Mira con calma la operación";
       const hint = action.stage === "hint"
         ? baseHint
         : action.stage === "visual"
           ? `👀 ${baseHint}. Mira las opciones y descarta las que no pueden ser.`
           : `⭐ ${baseHint}. Tómate un segundo: estima primero y luego elige.`;
-
       return {
         ...state,
-        currentChallenge: {
-          ...state.currentChallenge,
-          baseHint,
-          hint,
-          assistanceStage: action.stage,
-        },
-        adaptiveDifficulty: {
-          ...state.adaptiveDifficulty,
-          hintsEnabled: true,
-        },
+        currentChallenge: { ...state.currentChallenge, baseHint, hint, assistanceStage: action.stage },
+        adaptiveDifficulty: { ...state.adaptiveDifficulty, hintsEnabled: true },
       };
     }
 
     case "GRANT_MATH_RETRY": {
       if (!state.currentChallenge || state.phase !== "math" || state.currentChallenge.retryGranted) return state;
-
       const originalQuestion = state.currentChallenge.question.replace(/^💡 Segunda oportunidad: /, "");
       const baseHint = state.currentChallenge.baseHint ?? state.currentChallenge.hint ?? "Piensa paso a paso";
-
       return {
         ...state,
         currentChallenge: {
@@ -248,22 +227,14 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
           assistanceStage: "urgent",
           retryGranted: true,
         },
-        adaptiveDifficulty: {
-          ...state.adaptiveDifficulty,
-          hintsEnabled: true,
-        },
+        adaptiveDifficulty: { ...state.adaptiveDifficulty, hintsEnabled: true },
       };
     }
 
-    case "SHOOT": {
+    case "SHOOT":
       if (!state.targetCoord || !state.levelConfig) return state;
       if (state.phase !== "aiming" && state.phase !== "shooting") return state;
-      return {
-        ...state,
-        ball: { ...state.ball, inFlight: true },
-        phase: "shooting",
-      };
-    }
+      return { ...state, ball: { ...state.ball, inFlight: true }, phase: "shooting" };
 
     case "SHOT_COMPLETE": {
       const result = action.result;
@@ -271,31 +242,19 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       const newShotsTaken = state.shotsTaken + 1;
       const newCombo = result.scored ? state.combo + 1 : 0;
       const newMaxCombo = Math.max(state.maxCombo, newCombo);
-
       const baseScore = result.scored ? 100 : 0;
       const comboBonus = newCombo > 1 ? (newCombo - 1) * 50 : 0;
       const mathBonus = result.mathCorrect ? 25 : 0;
-      const multipliedScore = Math.round(
-        (baseScore + comboBonus + mathBonus) * result.bonusMultiplier
-      );
+      const multipliedScore = Math.round((baseScore + comboBonus + mathBonus) * result.bonusMultiplier);
       const newScore = state.score + multipliedScore;
 
       let newParticles: Particle[] = [];
       let newFloatingTexts: FloatingText[] = [];
-
       if (result.scored) {
-        newParticles = createConfettiParticles(0.5, 0.3, 30);
+        newParticles = createConfettiParticles(0.5, 0.3, state.currentMathPower === "perfect" ? 50 : 30);
         newFloatingTexts = [createFloatingText("¡GOL!", 0.5, 0.3, "#FFD700", "xl")];
-        if (newCombo > 1) {
-          newFloatingTexts.push(
-            createFloatingText(`COMBO x${newCombo}!`, 0.5, 0.45, "#FF6B35", "lg")
-          );
-        }
-        if (result.bonusMultiplier > 1.5) {
-          newFloatingTexts.push(
-            createFloatingText("¡ESQUINA! BONUS", 0.5, 0.55, "#7BED9F", "md")
-          );
-        }
+        if (newCombo > 1) newFloatingTexts.push(createFloatingText(`COMBO x${newCombo}!`, 0.5, 0.45, "#FF6B35", "lg"));
+        if (result.bonusMultiplier > 1.5) newFloatingTexts.push(createFloatingText("¡ESQUINA! BONUS", 0.5, 0.55, "#7BED9F", "md"));
       } else if (result.savedByKeeper) {
         newFloatingTexts = [createFloatingText("¡Atajada!", 0.5, 0.3, "#FF4757", "lg")];
       } else if (result.blockedByWall) {
@@ -303,13 +262,8 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       } else {
         newFloatingTexts = [createFloatingText("¡Afuera!", 0.5, 0.3, "#FF4757", "md")];
       }
-
-      if (result.mathCorrect && result.scored) {
-        newParticles = [...newParticles, ...createStarParticles(0.5, 0.5)];
-      }
-
+      if (result.mathCorrect && result.scored) newParticles = [...newParticles, ...createStarParticles(0.5, 0.5)];
       const newChallenge = state.levelConfig ? generateChallenge(state.levelConfig) : null;
-
       return {
         ...state,
         shotsScored: newShotsScored,
@@ -328,78 +282,40 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
 
     case "NEXT_SHOT": {
       if (!state.levelConfig) return state;
-
       const { shotsScored, shotsTaken, levelConfig } = state;
       const shotsLeft = levelConfig.shotsAllowed - shotsTaken;
-
-      if (shotsScored >= levelConfig.shotsRequired) {
-        return { ...state, screen: "victory" };
-      }
-
-      if (shotsLeft <= 0) {
-        return { ...state, screen: "defeat" };
-      }
-
+      if (shotsScored >= levelConfig.shotsRequired) return { ...state, screen: "victory" };
+      if (shotsLeft <= 0) return { ...state, screen: "defeat" };
       return {
         ...state,
         phase: "aiming",
         targetCoord: null,
         lastShotResult: null,
         ball: createInitialBall(),
-        adaptiveDifficulty: {
-          ...state.adaptiveDifficulty,
-          hintsEnabled: false,
-        },
+        adaptiveDifficulty: { ...state.adaptiveDifficulty, hintsEnabled: false },
         floatingTexts: [],
+        currentMathPower: null,
       };
     }
 
-    case "LEVEL_COMPLETE":
-      return { ...state, screen: "victory" };
-
-    case "LEVEL_FAILED":
-      return { ...state, screen: "defeat" };
-
-    case "UPDATE_PHYSICS":
-      return state;
-
-    case "ADD_PARTICLES":
-      return { ...state, particles: [...state.particles, ...action.particles] };
-
-    case "ADD_FLOATING_TEXT":
-      return { ...state, floatingTexts: [...state.floatingTexts, action.text] };
+    case "LEVEL_COMPLETE": return { ...state, screen: "victory" };
+    case "LEVEL_FAILED": return { ...state, screen: "defeat" };
+    case "UPDATE_PHYSICS": return state;
+    case "ADD_PARTICLES": return { ...state, particles: [...state.particles, ...action.particles] };
+    case "ADD_FLOATING_TEXT": return { ...state, floatingTexts: [...state.floatingTexts, action.text] };
 
     case "TICK_PARTICLES": {
       const dt = 0.016;
       const updatedParticles = state.particles
-        .map((p) => ({
-          ...p,
-          x: p.x + p.vx * dt,
-          y: p.y + p.vy * dt,
-          vy: p.vy + 2 * dt,
-          life: p.life - dt / p.maxLife,
-        }))
+        .map((p) => ({ ...p, x: p.x + p.vx * dt, y: p.y + p.vy * dt, vy: p.vy + 2 * dt, life: p.life - dt / p.maxLife }))
         .filter((p) => p.life > 0);
-
       const updatedTexts = state.floatingTexts
-        .map((t) => ({
-          ...t,
-          y: t.y - 0.5 * dt,
-          life: t.life - dt / (t.maxLife * 1.5),
-        }))
+        .map((t) => ({ ...t, y: t.y - 0.5 * dt, life: t.life - dt / (t.maxLife * 1.5) }))
         .filter((t) => t.life > 0);
-
-      return {
-        ...state,
-        particles: updatedParticles,
-        floatingTexts: updatedTexts,
-      };
+      return { ...state, particles: updatedParticles, floatingTexts: updatedTexts };
     }
 
-    case "RESET_GAME":
-      return { ...initialGameState };
-
-    default:
-      return state;
+    case "RESET_GAME": return { ...initialGameState };
+    default: return state;
   }
 }
