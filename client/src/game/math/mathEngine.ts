@@ -28,14 +28,12 @@ function generateOptions(answer: number, count = 4): number[] {
     if (candidate > 0) opts.add(candidate);
     attempts++;
   }
-  // fill if needed
   while (opts.size < count) {
     opts.add(answer + opts.size * 3);
   }
   return shuffle(Array.from(opts)).slice(0, count);
 }
 
-// ── Multiplication Challenges ────────────────────────────────
 function multiplicationChallenge(difficulty: "easy" | "medium" | "hard"): MathChallenge {
   let a: number, b: number;
   if (difficulty === "easy") {
@@ -59,7 +57,6 @@ function multiplicationChallenge(difficulty: "easy" | "medium" | "hard"): MathCh
   };
 }
 
-// ── Coordinate Challenges ────────────────────────────────────
 function coordinateChallenge(
   difficulty: "easy" | "medium" | "hard",
   quadrants: 1 | 4
@@ -100,11 +97,10 @@ function coordinateChallenge(
     answer: t.a,
     options: t.opts,
     timeLimit: difficulty === "easy" ? 15 : 10,
-    hint: `Recuerda: (X va horizontal, Y va vertical)`,
+    hint: "Recuerda: X va horizontal y Y va vertical",
   };
 }
 
-// ── Angle Challenges ─────────────────────────────────────────
 function angleChallenge(difficulty: "easy" | "medium" | "hard"): MathChallenge {
   const angles = difficulty === "easy"
     ? [0, 30, 45, 60, 90]
@@ -133,24 +129,23 @@ function angleChallenge(difficulty: "easy" | "medium" | "hard"): MathChallenge {
     answer: t.a,
     options: t.opts,
     timeLimit: difficulty === "easy" ? 15 : 10,
-    hint: `Un ángulo recto tiene 90°`,
+    hint: "Un ángulo recto tiene 90°",
   };
 }
 
-// ── Velocity Challenges ──────────────────────────────────────
 function velocityChallenge(difficulty: "easy" | "medium" | "hard"): MathChallenge {
-  const speed = randomInt(5, 20) * 5;
-  const time = randomInt(2, 5);
-  const distance = speed * time;
+  const speed = randomInt(2, 10); // m/s
+  const time = randomInt(2, 5);   // s
+  const distance = speed * time;  // m
 
   const questions = [
     {
-      q: `El balón va a ${speed} km/h durante ${time} segundos. ¿Cuántos metros recorre? (1 seg = 1 metro aquí)`,
+      q: `El balón va a ${speed} m/s durante ${time} segundos. ¿Cuántos metros recorre?`,
       a: distance,
       opts: generateOptions(distance),
     },
     {
-      q: `Si el balón recorre ${distance} metros en ${time} segundos, ¿a qué velocidad va?`,
+      q: `Si el balón recorre ${distance} metros en ${time} segundos, ¿a qué velocidad va en m/s?`,
       a: speed,
       opts: generateOptions(speed),
     },
@@ -163,11 +158,10 @@ function velocityChallenge(difficulty: "easy" | "medium" | "hard"): MathChalleng
     answer: t.a,
     options: t.opts,
     timeLimit: difficulty === "hard" ? 8 : 12,
-    hint: `Velocidad × Tiempo = Distancia`,
+    hint: "Velocidad × Tiempo = Distancia",
   };
 }
 
-// ── Main Generator ───────────────────────────────────────────
 export function generateChallenge(level: LevelConfig): MathChallenge {
   const { concept, mathDifficulty, gridQuadrants } = level;
 
@@ -187,7 +181,6 @@ export function generateChallenge(level: LevelConfig): MathChallenge {
       return velocityChallenge(mathDifficulty);
 
     case "directions":
-      // Very simple: just pick a direction
       return {
         type: "coordinate",
         question: "¿A qué lado de la portería quieres apuntar?",
@@ -198,7 +191,6 @@ export function generateChallenge(level: LevelConfig): MathChallenge {
       };
 
     case "trajectories":
-      // Mix of multiplication and angles
       return Math.random() > 0.5
         ? multiplicationChallenge(mathDifficulty)
         : angleChallenge(mathDifficulty);
@@ -208,7 +200,6 @@ export function generateChallenge(level: LevelConfig): MathChallenge {
   }
 }
 
-// ── Power Calculator ─────────────────────────────────────────
 export function calculatePowerFromMath(
   answer: number,
   correctAnswer: number,
@@ -218,19 +209,19 @@ export function calculatePowerFromMath(
   const mathCorrect = answer === correctAnswer;
   const timeBonus = Math.max(0, 1 - timeTaken / timeLimit);
 
-  if (!mathCorrect) return 40 + Math.random() * 20; // 40-60% power on wrong answer
-  return 70 + timeBonus * 30; // 70-100% power on correct answer
+  if (!mathCorrect) return 40 + Math.random() * 20;
+  return 70 + timeBonus * 30;
 }
 
-// ── Adaptive Difficulty ──────────────────────────────────────
 export function updateAdaptiveDifficulty(
   currentMultiplier: number,
   recentErrors: number[],
   avgResponseTime: number,
   timeLimit: number
 ): { multiplier: number; hintsEnabled: boolean; targetSizeMultiplier: number } {
-  const recentErrorRate =
-    recentErrors.slice(-5).filter(Boolean).length / Math.min(5, recentErrors.length);
+  const recentErrorRate = recentErrors.length === 0
+    ? 0
+    : recentErrors.slice(-5).filter(Boolean).length / Math.min(5, recentErrors.length);
   const isStruggling = recentErrorRate > 0.6 || avgResponseTime > timeLimit * 0.9;
   const isExcelling = recentErrorRate < 0.2 && avgResponseTime < timeLimit * 0.5;
 
@@ -245,9 +236,7 @@ export function updateAdaptiveDifficulty(
   };
 }
 
-// ── Coordinate to Goal Position ──────────────────────────────
 export function coordToGoalPosition(coord: Vec2, gridMax: Vec2): Vec2 {
-  // Normalize coord to 0-1 range within goal
   return {
     x: (coord.x + gridMax.x) / (gridMax.x * 2),
     y: (coord.y + gridMax.y) / (gridMax.y * 2),
