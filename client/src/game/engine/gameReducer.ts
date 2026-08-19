@@ -6,10 +6,7 @@
 import type { GameState, GameAction, BallState, GoalkeeperState, Particle, FloatingText } from "./types";
 import { getLevelById } from "../levels/levelData";
 import { generateChallenge, updateAdaptiveDifficulty } from "../math/mathEngine";
-import { resolveShotResult } from "./physics";
 import { nanoid } from "nanoid";
-
-const GRID_MAX = { x: 3, y: 3 };
 
 function createInitialBall(): BallState {
   return {
@@ -164,8 +161,6 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       return {
         ...state,
         targetCoord: action.coord,
-        // For directions: stay in aiming phase until SHOOT is dispatched
-        // For others: go to math phase to show the challenge
         phase: skipMath ? "aiming" : "math",
         ball: skipMath ? { ...state.ball, power: 80 } : state.ball,
       };
@@ -185,18 +180,19 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       );
 
       const floatingTexts = correct
-        ? [createFloatingText("\u00a1CORRECTO! +PODER", 0.5, 0.5, "#7BED9F", "lg")]
+        ? [createFloatingText("¡CORRECTO! +PODER", 0.5, 0.5, "#7BED9F", "lg")]
         : [createFloatingText("Respuesta incorrecta", 0.5, 0.5, "#FF4757", "md")];
 
       return {
         ...state,
         ball: { ...state.ball, power: newPower },
-        // Set to "aiming" so the SHOOT action (dispatched shortly after) can fire
         phase: "aiming",
         adaptiveDifficulty: {
           ...state.adaptiveDifficulty,
           recentErrors: newErrors,
-          ...adaptive,
+          currentMultiplier: adaptive.multiplier,
+          hintsEnabled: adaptive.hintsEnabled,
+          targetSizeMultiplier: adaptive.targetSizeMultiplier,
         },
         floatingTexts: [...state.floatingTexts, ...floatingTexts],
       };
@@ -204,7 +200,6 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
 
     case "SHOOT": {
       if (!state.targetCoord || !state.levelConfig) return state;
-      // Only shoot from aiming or shooting phase (not from math — submitMath handles that)
       if (state.phase !== "aiming" && state.phase !== "shooting") return state;
       return {
         ...state,
@@ -220,7 +215,6 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       const newCombo = result.scored ? state.combo + 1 : 0;
       const newMaxCombo = Math.max(state.maxCombo, newCombo);
 
-      // Score calculation
       const baseScore = result.scored ? 100 : 0;
       const comboBonus = newCombo > 1 ? (newCombo - 1) * 50 : 0;
       const mathBonus = result.mathCorrect ? 25 : 0;
@@ -229,15 +223,12 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       );
       const newScore = state.score + multipliedScore;
 
-      // Particles and floating texts
       let newParticles: Particle[] = [];
       let newFloatingTexts: FloatingText[] = [];
 
       if (result.scored) {
         newParticles = createConfettiParticles(0.5, 0.3, 30);
-        newFloatingTexts = [
-          createFloatingText("¡GOL!", 0.5, 0.3, "#FFD700", "xl"),
-        ];
+        newFloatingTexts = [createFloatingText("¡GOL!", 0.5, 0.3, "#FFD700", "xl")];
         if (newCombo > 1) {
           newFloatingTexts.push(
             createFloatingText(`COMBO x${newCombo}!`, 0.5, 0.45, "#FF6B35", "lg")
@@ -308,11 +299,8 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
     case "LEVEL_FAILED":
       return { ...state, screen: "defeat" };
 
-    case "UPDATE_PHYSICS": {
-      // Update goalkeeper position
-      if (!state.levelConfig) return state;
-      return state; // Physics handled in component with requestAnimationFrame
-    }
+    case "UPDATE_PHYSICS":
+      return state;
 
     case "ADD_PARTICLES":
       return { ...state, particles: [...state.particles, ...action.particles] };
@@ -321,13 +309,13 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       return { ...state, floatingTexts: [...state.floatingTexts, action.text] };
 
     case "TICK_PARTICLES": {
-      const dt = 0.016; // ~60fps
+      const dt = 0.016;
       const updatedParticles = state.particles
         .map((p) => ({
           ...p,
           x: p.x + p.vx * dt,
           y: p.y + p.vy * dt,
-          vy: p.vy + 2 * dt, // gravity
+          vy: p.vy + 2 * dt,
           life: p.life - dt / p.maxLife,
         }))
         .filter((p) => p.life > 0);
