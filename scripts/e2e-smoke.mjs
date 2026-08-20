@@ -1,10 +1,9 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 const APP_URL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:4173";
-const DEBUG_PORT = Number(process.env.E2E_DEBUG_PORT ?? 9222);
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -68,15 +67,27 @@ const profileDir = mkdtempSync(path.join(os.tmpdir(), "math-powers-e2e-"));
 const server = spawn("pnpm", ["preview", "--host", "127.0.0.1", "--port", "4173"], { stdio: "ignore" });
 let chrome;
 let cdp;
+let chromeStderr = "";
 
 try {
   await waitFor(async () => (await fetch(APP_URL)).ok, "Preview server did not start");
   chrome = spawn(findChrome(), [
     "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage",
-    `--remote-debugging-port=${DEBUG_PORT}`, `--user-data-dir=${profileDir}`, "about:blank",
-  ], { stdio: "ignore" });
+    "--no-first-run", "--disable-background-networking", "--remote-debugging-address=127.0.0.1",
+    "--remote-debugging-port=0", `--user-data-dir=${profileDir}`, "data:blank",
+  ], { stdio: ["ignore", "ignore", "pipe"] });
+  chrome.stderr.on("data", (chunk) => { chromeStderr += chunk.toString(); });
+  const activePortFile = path.join(profileDir, "DevToolsActivePort");
+  const debugPort = await waitFor(() => {
+    if (!existsSync(activePortFile)) {
+      if (chrome.exitCode !== null) throw new Error(`Chrome exited with ${chrome.exitCode}: ${chromeStderr.slice(-1000)}`);
+      return false;
+    }
+    const [port] = readFileSync(activePortFile, "utf8").trim().split(/\r?\n/);
+    return Number(port) || false;
+  }, "Chrome did not publish its DevTools port");
   const target = await waitFor(async () => {
-    const response = await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/list`);
+    const response = await fetch(`http://127.0.0.1:${debugPort}/json/list`);
     const pages = await response.json();
     return pages.find((page) => page.type === "page" && page.webSocketDebuggerUrl);
   }, "Chrome DevTools did not become available");
