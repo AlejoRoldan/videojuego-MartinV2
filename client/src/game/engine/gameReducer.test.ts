@@ -28,6 +28,7 @@ describe("game reducer", () => {
     expect(state.shotsTaken).toBe(0);
     expect(state.shotsScored).toBe(0);
     expect(state.phase).toBe("aiming");
+    expect(state.lastMathCorrect).toBeNull();
   });
 
   it("ignores invalid level ids", () => {
@@ -47,6 +48,7 @@ describe("game reducer", () => {
     state = gameReducer(state, { type: "SET_TARGET", coord: { x: 1, y: 1 } });
     expect(state.phase).toBe("aiming");
     expect(state.ball.power).toBe(80);
+    expect(state.lastMathCorrect).toBe(true);
   });
 
   it("enables a small hint without changing the math question", () => {
@@ -93,6 +95,20 @@ describe("game reducer", () => {
     }
     expect(state.adaptiveDifficulty.currentMultiplier).toBeLessThan(1);
     expect(state.adaptiveDifficulty.hintsEnabled).toBe(true);
+    expect(state.lastMathCorrect).toBe(false);
+  });
+
+  it("stores a correct math outcome independently from shot power", () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    let state = gameReducer(initialGameState, { type: "START_LEVEL", levelId: 3 });
+    state = gameReducer(state, { type: "SET_TARGET", coord: { x: 1, y: 1 } });
+    state = gameReducer(state, {
+      type: "SUBMIT_MATH",
+      answer: state.currentChallenge!.answer,
+      timeLeft: state.currentChallenge!.timeLimit,
+    });
+    expect(state.lastMathCorrect).toBe(true);
+    expect(state.ball.power).toBe(85);
   });
 
   it("does not shoot without a target", () => {
@@ -142,5 +158,6 @@ describe("game reducer", () => {
     const state = gameReducer(dirty, { type: "RESET_GAME" });
     expect(state.score).toBe(0);
     expect(state.screen).toBe("home");
+    expect(state.lastMathCorrect).toBeNull();
   });
 });

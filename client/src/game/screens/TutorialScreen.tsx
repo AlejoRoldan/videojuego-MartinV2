@@ -86,7 +86,8 @@ export default function TutorialScreen() {
       {/* Header */}
       <div className="flex items-center gap-3 px-4 pb-4" style={{ paddingTop: "max(24px, env(safe-area-inset-top, 24px))" }}>
         <button
-          onPointerDown={() => { sounds.click(); goToScreen("home"); }}
+          onClick={() => { sounds.click(); goToScreen("home"); }}
+          aria-label="Volver al inicio"
           className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 active:scale-95"
           style={{
             background: "rgba(255,255,255,0.1)",
@@ -112,7 +113,7 @@ export default function TutorialScreen() {
         {STEPS.map((_, i) => (
           <button
             key={i}
-            onPointerDown={() => goStep(i)}
+            onClick={() => goStep(i)}
             className="rounded-full transition-all duration-300"
             style={{
               width: i === step ? 24 : 10,
@@ -190,7 +191,7 @@ export default function TutorialScreen() {
         {step > 0 && (
           <motion.button
             whileTap={{ scale: 0.95 }}
-            onPointerDown={goPrev}
+            onClick={goPrev}
             className="flex-1 rounded-2xl font-black text-white/70 flex items-center justify-center gap-2"
             style={{
               background: "rgba(255,255,255,0.05)",
@@ -205,7 +206,7 @@ export default function TutorialScreen() {
         )}
         <motion.button
           whileTap={{ scale: 0.95 }}
-          onPointerDown={goNext}
+          onClick={goNext}
           className="flex-1 rounded-2xl font-black text-white flex items-center justify-center gap-2"
           style={{
             fontFamily: "'Fredoka One', cursive",

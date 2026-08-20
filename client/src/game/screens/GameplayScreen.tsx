@@ -218,7 +218,8 @@ export default function GameplayScreen() {
         {/* Row 1: back + level name + score */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
           <button
-            onPointerDown={() => { sounds.click(); goToScreen("level-select"); }}
+            onClick={() => { sounds.click(); goToScreen("level-select"); }}
+            aria-label="Volver a seleccionar nivel"
             style={{
               width: 44, height: 44, borderRadius: 12, flexShrink: 0,
               display: "flex", alignItems: "center", justifyContent: "center",
@@ -457,7 +458,9 @@ export default function GameplayScreen() {
               return (
                 <button
                   key={`${x},${y}`}
-                  onPointerDown={() => handleCellTap(x, y)}
+                  onClick={() => handleCellTap(x, y)}
+                  aria-label={`Apuntar a coordenada ${x}, ${y}`}
+                  aria-pressed={isSelected}
                   disabled={!canTap}
                   style={{
                     position: "relative",
@@ -568,7 +571,13 @@ export default function GameplayScreen() {
                 animate={{ scale: 1, opacity: 1 }}
                 exit={{ scale: 1.1, opacity: 0 }}
                 transition={{ duration: 0.3, ease: [0.23, 1, 0.32, 1] }}
-                onPointerDown={handleNextShot}
+                onClick={handleNextShot}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") handleNextShot();
+                }}
+                role="button"
+                tabIndex={0}
+                aria-label="Continuar al siguiente tiro"
                 style={{
                   position: "absolute", inset: 0,
                   display: "flex", flexDirection: "column",
@@ -729,7 +738,8 @@ export default function GameplayScreen() {
               </div>
               <motion.button
                 whileTap={{ scale: 0.92 }}
-                onPointerDown={handleShoot}
+                onClick={handleShoot}
+                aria-label={`Disparar a la coordenada ${targetCoord.x}, ${targetCoord.y}`}
                 style={{
                   padding: "16px 28px",
                   borderRadius: 14,
@@ -911,7 +921,8 @@ function MathPanel({
             <motion.button
               key={opt}
               whileTap={{ scale: 0.88 }}
-              onPointerDown={() => handleAnswer(opt)}
+              onClick={() => handleAnswer(opt)}
+              aria-label={`Responder ${opt}`}
               disabled={answered}
               style={{
                 height: 72,

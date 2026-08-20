@@ -11,7 +11,10 @@
     "check": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "qa": "pnpm check && pnpm test",
+    "test:coverage": "node scripts/run-coverage.mjs",
+    "test:e2e": "node scripts/e2e-smoke.mjs",
+    "qa": "pnpm check && pnpm test:coverage",
+    "qa:full": "pnpm qa && pnpm build && pnpm test:e2e",
     "format": "prettier --write ."
   },
   "dependencies": {

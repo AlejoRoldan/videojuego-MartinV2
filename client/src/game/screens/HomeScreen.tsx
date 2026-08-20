@@ -157,7 +157,7 @@ export default function HomeScreen() {
                 <motion.button
                   key={pace}
                   whileTap={{ scale: 0.94 }}
-                  onPointerDown={() => handlePaceChange(pace)}
+                  onClick={() => handlePaceChange(pace)}
                   aria-pressed={selected}
                   className="rounded-xl py-2 px-1 flex flex-col items-center justify-center"
                   style={{
@@ -183,7 +183,7 @@ export default function HomeScreen() {
         <motion.button
           whileTap={{ scale: 0.95 }}
           whileHover={{ scale: 1.03 }}
-          onPointerDown={() => handleNav("level-select")}
+          onClick={() => handleNav("level-select")}
           className="w-full py-3 rounded-2xl font-black text-2xl text-white flex items-center justify-center gap-3"
           style={{
             fontFamily: "'Fredoka One', cursive",
@@ -255,7 +255,7 @@ function SecondaryButton({
     <motion.button
       whileTap={{ scale: 0.93 }}
       whileHover={{ scale: 1.05 }}
-      onPointerDown={onClick}
+      onClick={onClick}
       className="flex-1 py-2.5 rounded-xl font-black text-white flex flex-col items-center gap-1"
       style={{
         fontFamily: "'Fredoka One', cursive",

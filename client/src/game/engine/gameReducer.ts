@@ -88,6 +88,7 @@ export const initialGameState: GameState = {
   phase: "aiming",
   targetCoord: null,
   lastShotResult: null,
+  lastMathCorrect: null,
   adaptiveDifficulty: {
     frustrationScore: 0,
     avgResponseTime: 5,
@@ -135,6 +136,7 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         phase: "aiming",
         targetCoord: null,
         lastShotResult: null,
+        lastMathCorrect: null,
         adaptiveDifficulty: { ...state.adaptiveDifficulty, hintsEnabled: false },
         particles: [],
         floatingTexts: [],
@@ -151,6 +153,7 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         ball: skipMath ? { ...state.ball, power: 80 } : state.ball,
         adaptiveDifficulty: { ...state.adaptiveDifficulty, hintsEnabled: false },
         currentMathPower: null,
+        lastMathCorrect: skipMath ? true : null,
       };
     }
 
@@ -194,6 +197,7 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         },
         floatingTexts: [...state.floatingTexts, ...floatingTexts],
         currentMathPower: mathPower,
+        lastMathCorrect: correct,
       };
     }
 
@@ -291,6 +295,7 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         phase: "aiming",
         targetCoord: null,
         lastShotResult: null,
+        lastMathCorrect: null,
         ball: createInitialBall(),
         adaptiveDifficulty: { ...state.adaptiveDifficulty, hintsEnabled: false },
         floatingTexts: [],

@@ -40,7 +40,8 @@ export default function ProgressScreen() {
         style={{ paddingTop: "max(24px, env(safe-area-inset-top, 24px))" }}
       >
         <button
-          onPointerDown={() => { sounds.click(); goToScreen("home"); }}
+          onClick={() => { sounds.click(); goToScreen("home"); }}
+          aria-label="Volver al inicio"
           className="w-12 h-12 rounded-xl flex items-center justify-center active:scale-95"
           style={{ background: "rgba(255,255,255,0.1)", border: "2px solid rgba(255,255,255,0.2)", touchAction: "manipulation" }}
         >

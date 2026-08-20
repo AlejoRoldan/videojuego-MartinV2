@@ -168,6 +168,8 @@ export interface GameState {
   phase: "aiming" | "math" | "shooting" | "result" | "celebrating";
   targetCoord: Vec2 | null;
   lastShotResult: ShotResult | null;
+  /** Explicit outcome of the latest math interaction for the pending shot. */
+  lastMathCorrect: boolean | null;
   adaptiveDifficulty: AdaptiveDifficulty;
   particles: Particle[];
   floatingTexts: FloatingText[];

@@ -20,7 +20,8 @@ export default function LevelSelectScreen() {
       {/* Header */}
       <div className="flex items-center gap-3 px-4 pt-safe pt-5 pb-4">
         <button
-          onPointerDown={() => { sounds.click(); goToScreen("home"); }}
+          onClick={() => { sounds.click(); goToScreen("home"); }}
+          aria-label="Volver al inicio"
           className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 active:scale-95"
           style={{
             background: "rgba(255,255,255,0.12)",
@@ -118,8 +119,9 @@ function LevelCard({
   return (
     <motion.button
       whileTap={isUnlocked ? { scale: 0.97 } : {}}
-      onPointerDown={isUnlocked ? onPlay : undefined}
+      onClick={isUnlocked ? onPlay : undefined}
       disabled={!isUnlocked}
+      aria-label={isUnlocked ? `Jugar nivel ${level.id}: ${level.name}` : `Nivel ${level.id} bloqueado: ${level.name}`}
       className="w-full text-left rounded-2xl overflow-hidden relative flex items-center gap-4"
       style={{
         background: isUnlocked

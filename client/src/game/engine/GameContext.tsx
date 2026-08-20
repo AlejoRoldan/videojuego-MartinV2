@@ -9,6 +9,7 @@ import { gameReducer, initialGameState } from "./gameReducer";
 import { resolveShotResult } from "./physics";
 import { sounds } from "./soundSystem";
 import { ASSISTANCE_THRESHOLDS, getMathAssistanceStage, getRetrySeconds, loadGamePace } from "./gamePace";
+import { calculateRemainingMathTime, resolveMathCorrect, scheduleAutoShoot } from "./gameFlow";
 
 interface PlayerProfile {
   name: string; level: number; xp: number; coins: number; stars: number;
@@ -53,6 +54,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   const stateRef = useRef(state); stateRef.current = state;
   const shootTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mathSubmitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const directionShootTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const assistanceTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const mathStartedAtRef = useRef<number | null>(null);
   const inFlightRef = useRef(false);
@@ -67,13 +69,24 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   }, []);
   const goToScreen = useCallback((screen: GameState["screen"]) => dispatch({ type: "SET_SCREEN", screen }), []);
   const startLevel = useCallback((levelId: number) => {
-    inFlightRef.current = false; clearAssistanceTimers(); dispatch({ type: "START_LEVEL", levelId });
+    inFlightRef.current = false;
+    clearAssistanceTimers();
+    if (directionShootTimerRef.current) clearTimeout(directionShootTimerRef.current);
+    dispatch({ type: "START_LEVEL", levelId });
   }, [clearAssistanceTimers]);
 
   const setTarget = useCallback((coord: Vec2) => {
     dispatch({ type: "SET_TARGET", coord });
     const s = stateRef.current;
-    if (s.levelConfig?.concept === "directions") setTimeout(() => dispatch({ type: "SHOOT" }), 350);
+    if (s.levelConfig?.concept === "directions") {
+      if (directionShootTimerRef.current) clearTimeout(directionShootTimerRef.current);
+      directionShootTimerRef.current = scheduleAutoShoot({
+        dispatch,
+        isInFlight: () => inFlightRef.current,
+        markInFlight: () => { inFlightRef.current = true; },
+        delayMs: 350,
+      });
+    }
   }, []);
 
   const shoot = useCallback(() => {
@@ -95,9 +108,8 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    const elapsedSeconds = mathStartedAtRef.current === null ? 0 : (Date.now() - mathStartedAtRef.current) / 1000;
     const derivedTimeLeft = s.currentChallenge
-      ? Math.max(0, s.currentChallenge.timeLimit - elapsedSeconds)
+      ? calculateRemainingMathTime(s.currentChallenge.timeLimit, mathStartedAtRef.current)
       : undefined;
     const effectiveTimeLeft = timeLeft ?? derivedTimeLeft;
 
@@ -105,11 +117,11 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     mathStartedAtRef.current = null;
     dispatch({ type: "SUBMIT_MATH", answer, timeLeft: effectiveTimeLeft, usedRetry: usedRetry ?? s.currentChallenge?.retryGranted ?? false });
     if (mathSubmitTimerRef.current) clearTimeout(mathSubmitTimerRef.current);
-    mathSubmitTimerRef.current = setTimeout(() => {
-      if (inFlightRef.current) return;
-      inFlightRef.current = true;
-      dispatch({ type: "SHOOT" });
-    }, 850);
+    mathSubmitTimerRef.current = scheduleAutoShoot({
+      dispatch,
+      isInFlight: () => inFlightRef.current,
+      markInFlight: () => { inFlightRef.current = true; },
+    });
   }, [clearAssistanceTimers]);
 
   useEffect(() => {
@@ -145,7 +157,9 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     shootTimerRef.current = setTimeout(() => {
       const s = stateRef.current;
       if (!s.targetCoord || !s.levelConfig) return;
-      const mathCorrect = s.ball.power > 70;
+      // Never infer learning performance from ball physics. Power can change
+      // independently as new abilities are added to the game.
+      const mathCorrect = resolveMathCorrect(s.lastMathCorrect, s.levelConfig.concept);
       const result = resolveShotResult(
         s.targetCoord, mathCorrect, s.ball.power, s.ball.spin, s.goalkeeper, s.wall,
         { keeperSpeed: s.levelConfig.keeperSpeed, wind: s.levelConfig.wind, windStrength: s.levelConfig.windStrength },
@@ -170,6 +184,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     clearAssistanceTimers();
     if (mathSubmitTimerRef.current) clearTimeout(mathSubmitTimerRef.current);
     if (shootTimerRef.current) clearTimeout(shootTimerRef.current);
+    if (directionShootTimerRef.current) clearTimeout(directionShootTimerRef.current);
   }, [clearAssistanceTimers]);
 
   const nextShot = useCallback(() => {
@@ -201,7 +216,12 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     } else dispatch({ type: "NEXT_SHOT" });
   }, []);
 
-  const resetGame = useCallback(() => { inFlightRef.current = false; clearAssistanceTimers(); dispatch({ type: "RESET_GAME" }); }, [clearAssistanceTimers]);
+  const resetGame = useCallback(() => {
+    inFlightRef.current = false;
+    clearAssistanceTimers();
+    if (directionShootTimerRef.current) clearTimeout(directionShootTimerRef.current);
+    dispatch({ type: "RESET_GAME" });
+  }, [clearAssistanceTimers]);
 
   return <GameContext.Provider value={{ state, dispatch, goToScreen, startLevel, setTarget, submitMath, shoot, nextShot, resetGame, playerProfile, updateProfile }}>{children}</GameContext.Provider>;
 }

@@ -28,5 +28,19 @@ jobs:
       - name: Typecheck
         run: pnpm check
 
-      - name: Unit tests
-        run: pnpm test
+      - name: Unit tests and coverage gate
+        run: pnpm test:coverage
+
+      - name: Production build
+        run: pnpm build
+
+      - name: Mobile E2E, accessibility and performance smoke test
+        run: pnpm test:e2e
+
+      - name: Upload coverage summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-summary
+          path: coverage/summary.json
+          if-no-files-found: ignore
