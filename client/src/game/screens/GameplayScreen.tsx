@@ -3,14 +3,14 @@
 // Design: Pixel Champions — FIXED VIEWPORT
 // LAYOUT (100dvh total):
 //   HUD:       ~18% (top bar + progress)
-//   GOAL:      ~58% (dominant — portería con cuadrícula)
+//   GOAL:      ~58% (dominant — portería limpia y enfocada)
 //   BOTTOM:    ~24% (instrucción + botón tirar / resultado)
-// KEY FIXES v5:
+// KEY FIXES v6:
 //   - height: 100dvh on root container (not minHeight)
 //   - Goal section uses flex-grow with explicit height calc
 //   - No empty space — portería fills the screen
-//   - Coordinates always visible inside each cell
-//   - Selected cell glows orange with pulsing ring
+//   - Transparent target zones preserve coordinates without a visible mesh
+//   - Selected zone glows orange with a restrained ring
 //   - Math panel is absolute overlay (not flex child)
 //   - Shoot button is large (min 56px height) for mobile
 // =============================================================
@@ -19,31 +19,75 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useGame } from "../engine/GameContext";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { ArrowLeft, Zap } from "lucide-react";
-import type { Vec2 } from "../engine/types";
-import { calculateTrajectory } from "../engine/physics";
+import type { FloatingText, MathPower, Particle, ShotReasonCode, Vec2 } from "../engine/types";
 import { sounds } from "../engine/soundSystem";
+import { MATH_POWER_META, PERFECT_STREAK_TARGET } from "../engine/mathPowers";
+import { getResultTransitionMs, getShotAnimationDuration, loadGamePace } from "../engine/gamePace";
+import { MicrovictoryBurst } from "./MicrovictoryBurst";
 
-const GOAL_BG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663638628604/YvKFUvGtEph4XyT2Rde5AJ/goal-net-clean-j5wwxUVd6hJxVWmqCsmLXa.webp";
+const GOAL_BG = "/goal-night-teen.webp";
 const KEEPER_IMG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663638628604/YvKFUvGtEph4XyT2Rde5AJ/goalkeeper-cartoon-guVkhrpZ7AvWXKeLYUUChv.webp";
 const BALL_IMG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663638628604/YvKFUvGtEph4XyT2Rde5AJ/game-ball-2LkvtN9uYqK7nNkN7H9vMM.webp";
 
+const POWER_VISUALS: Record<Exclude<MathPower, null>, { accent: string; glow: string; trail: string }> = {
+  precision: { accent: "#7BED9F", glow: "rgba(123,237,159,.75)", trail: "#7BED9F" },
+  curve: { accent: "#B388FF", glow: "rgba(179,136,255,.78)", trail: "#B388FF" },
+  turbo: { accent: "#4DD0E1", glow: "rgba(77,208,225,.82)", trail: "#4DD0E1" },
+  perfect: { accent: "#FFD700", glow: "rgba(255,215,0,.9)", trail: "#FFF3A3" },
+};
+
+function getReasonLabel(reasonCode: ShotReasonCode): string {
+  switch (reasonCode) {
+    case "clean_target": return "El balón siguió la celda elegida.";
+    case "reduced_accuracy": return "La respuesta incorrecta redujo la precisión.";
+    case "wind_drift": return "El viento movió el balón antes de llegar.";
+    case "keeper_reach": return "El punto quedó al alcance del portero.";
+    case "wall_block": return "La trayectoria cruzó la zona de la barrera.";
+    case "outside_goal": return "El destino terminó fuera de la portería.";
+  }
+}
+
 export default function GameplayScreen() {
-  const { state, goToScreen, setTarget, submitMath, nextShot, shoot } = useGame();
+  const { state, goToScreen, setTarget, submitMath, nextShot, shoot, playerProfile } = useGame();
   const {
     levelConfig, phase, currentChallenge, shotsScored, shotsTaken,
-    score, combo, targetCoord, lastShotResult, ball, adaptiveDifficulty
+    score, combo, targetCoord, lastShotResult, ball, adaptiveDifficulty,
+    currentMathPower, perfectStreak, mathPowerSequence,
+    runtimeModifiers, pendingFlowIntervention,
   } = state;
 
   const [ballPos, setBallPos] = useState({ x: 50, y: 85 });
   const [mathTimeLeft, setMathTimeLeft] = useState(15);
   const [keeperX, setKeeperX] = useState(50);
+  const [shotFeedback, setShotFeedback] = useState<"flash" | "impact" | null>(null);
+  const missionCompletionCueRef = useRef(playerProfile.missionCompletions);
+  const flightPower = lastShotResult?.input.mathPower;
+  const powerVisual = flightPower ? POWER_VISUALS[flightPower] : null;
+  const missionCompletedThisShot = phase === "result"
+    && Boolean(lastShotResult?.scored)
+    && playerProfile.missionCompletions > missionCompletionCueRef.current;
+  const burstKind = phase === "result" && lastShotResult
+    ? missionCompletedThisShot
+      ? "mission"
+      : lastShotResult.mathCorrect && lastShotResult.input.mathPower === "perfect"
+        ? "perfect"
+        : lastShotResult.scored
+          ? "goal"
+          : lastShotResult.input.mathPower
+            ? "power"
+            : null
+    : null;
 
   const animFrameRef = useRef<number>(0);
   const keeperDirRef = useRef(1);
   const lastTimeRef = useRef(0);
   const mathTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const resultTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const shotFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasShot = useRef(false);
+  const shotCueRef = useRef<string | null>(null);
+  const lastPowerCueRef = useRef(0);
+  const perfectStreakCueRef = useRef(false);
 
   if (!levelConfig) return null;
 
@@ -54,6 +98,21 @@ export default function GameplayScreen() {
   const rows = gridMax - gridMin + 1;
 
   const progressPct = Math.min(100, (shotsScored / levelConfig.shotsRequired) * 100);
+  const evaluatedKeeperX = lastShotResult?.input.keeper.position.x;
+  const keeperDisplayX = phase === "shooting" || phase === "result"
+    ? (evaluatedKeeperX ?? keeperX / 100) * 100
+    : keeperX;
+  const flowNotice = pendingFlowIntervention
+    ? pendingFlowIntervention.trigger === "math_struggle"
+      ? "Te damos una ayuda extra para pensar."
+      : pendingFlowIntervention.trigger === "football_struggle"
+        ? "Ajustamos el reto futbolístico; tu matemática sigue contando."
+        : pendingFlowIntervention.trigger === "recovery"
+          ? "Tiro de recuperación: mantienes el mismo concepto matemático."
+          : "¡Gran dominio! El próximo tiro tendrá un reto futbolístico mayor."
+    : runtimeModifiers.assistanceLeadSeconds > 0
+      ? "La ayuda aparecerá un poco antes para acompañarte."
+      : null;
 
   // Build grid coordinates: top-left = (gridMin, gridMax), bottom-right = (gridMax, gridMin)
   const gridCoords: Vec2[] = [];
@@ -65,17 +124,53 @@ export default function GameplayScreen() {
     }
   }
 
+  const clearShotFeedback = useCallback(() => {
+    if (shotFeedbackTimerRef.current) clearTimeout(shotFeedbackTimerRef.current);
+    shotFeedbackTimerRef.current = null;
+    setShotFeedback(null);
+  }, []);
+
+  const triggerShotFeedback = useCallback((feedback: "flash" | "impact", durationMs: number) => {
+    if (shotFeedbackTimerRef.current) clearTimeout(shotFeedbackTimerRef.current);
+    setShotFeedback(feedback);
+    shotFeedbackTimerRef.current = setTimeout(() => {
+      setShotFeedback(null);
+      shotFeedbackTimerRef.current = null;
+    }, durationMs);
+  }, []);
+
   // ── Init sounds on mount ─────────────────────────────────
   useEffect(() => {
     sounds.init();
-  }, []);
+    return clearShotFeedback;
+  }, [clearShotFeedback]);
 
   // ── Reset hasShot on new phase ───────────────────────────
   useEffect(() => {
     if (phase === "aiming") {
       hasShot.current = false;
+      shotCueRef.current = null;
     }
   }, [phase]);
+
+  // ── Mission completion cue tracks the persisted reward transition. ──
+  useEffect(() => {
+    if (phase === "result" && playerProfile.missionCompletions > missionCompletionCueRef.current) {
+      missionCompletionCueRef.current = playerProfile.missionCompletions;
+    }
+  }, [phase, playerProfile.missionCompletions]);
+
+  // ── Math Power feedback ───────────────────────────────────
+  useEffect(() => {
+    if (perfectStreak < PERFECT_STREAK_TARGET) perfectStreakCueRef.current = false;
+    if (!currentMathPower || mathPowerSequence === 0 || lastPowerCueRef.current === mathPowerSequence) return;
+    lastPowerCueRef.current = mathPowerSequence;
+    sounds.power(currentMathPower);
+    if (perfectStreak >= PERFECT_STREAK_TARGET && !perfectStreakCueRef.current) {
+      perfectStreakCueRef.current = true;
+      sounds.perfectStreak();
+    }
+  }, [currentMathPower, mathPowerSequence, perfectStreak]);
 
   // ── Goalkeeper animation ─────────────────────────────────
   useEffect(() => {
@@ -101,47 +196,61 @@ export default function GameplayScreen() {
   }, [phase, levelConfig.hasKeeper, levelConfig.keeperSpeed]);
 
   // ── Ball trajectory animation ────────────────────────────
+  // The visual path uses the same duration as the engine timeout. This avoids
+  // a slow one-point-per-frame flight that can outlive a faster match rhythm.
   useEffect(() => {
-    if (phase !== "shooting" || !ball.inFlight || !state.targetCoord) return;
-    sounds.kick();
-    const normalizedX = state.targetCoord.x / gridMax;
-    const normalizedY = state.targetCoord.y / gridMax;
-    const traj = calculateTrajectory({
-      power: ball.power,
-      targetX: normalizedX,
-      targetY: normalizedY,
-      spin: ball.spin,
-      wind: levelConfig.wind ? (Math.random() - 0.5) * levelConfig.windStrength * 2 : 0,
-    });
-    let idx = 0;
-    const animateBall = () => {
-      if (idx >= traj.length) return;
-      const pt = traj[idx];
-      setBallPos({ x: pt.x * 100, y: pt.y * 100 });
-      idx++;
-      animFrameRef.current = requestAnimationFrame(animateBall);
+    if (phase !== "shooting" || !ball.inFlight || !lastShotResult) return;
+
+    const shotKey = `${lastShotResult.input.seed}:${lastShotResult.targetCoord.x}:${lastShotResult.targetCoord.y}`;
+    if (shotCueRef.current !== shotKey) {
+      shotCueRef.current = shotKey;
+      sounds.whoosh();
+      sounds.kick();
+      triggerShotFeedback("flash", 180);
+    }
+
+    const trajectory = lastShotResult.trajectoryPoints;
+    const durationMs = getShotAnimationDuration(loadGamePace(), lastShotResult.input.mathPower);
+    const startedAt = performance.now();
+    const animateBall = (now: number) => {
+      const progress = Math.min(1, Math.max(0, (now - startedAt) / durationMs));
+      const segment = progress * (trajectory.length - 1);
+      const lowerIndex = Math.floor(segment);
+      const upperIndex = Math.min(trajectory.length - 1, lowerIndex + 1);
+      const blend = segment - lowerIndex;
+      const from = trajectory[lowerIndex];
+      const to = trajectory[upperIndex];
+      const point = {
+        x: from.x + (to.x - from.x) * blend,
+        y: from.y + (to.y - from.y) * blend,
+      };
+      setBallPos({ x: point.x * 100, y: point.y * 100 });
+      if (progress < 1) animFrameRef.current = requestAnimationFrame(animateBall);
     };
     animFrameRef.current = requestAnimationFrame(animateBall);
     return () => { cancelAnimationFrame(animFrameRef.current); };
-  }, [phase, ball.inFlight]);
+  }, [phase, ball.inFlight, lastShotResult, triggerShotFeedback]);
 
   // ── Play result sound + auto-advance ────────────────────
   useEffect(() => {
     if (phase !== "result" || !lastShotResult) return;
+    triggerShotFeedback("impact", 190);
     if (lastShotResult.scored) {
       sounds.goal();
       if (combo > 1) setTimeout(() => sounds.combo(), 400);
     } else if (lastShotResult.savedByKeeper) {
       sounds.save();
+    } else if (lastShotResult.blockedByWall) {
+      sounds.wall();
     } else {
       sounds.miss();
     }
     resultTimerRef.current = setTimeout(() => {
       setBallPos({ x: 50, y: 85 });
       nextShot();
-    }, 2500);
+    }, getResultTransitionMs(loadGamePace(), lastShotResult.input.mathPower === "perfect"));
     return () => { if (resultTimerRef.current) clearTimeout(resultTimerRef.current); };
-  }, [phase, lastShotResult]);
+  }, [phase, lastShotResult, triggerShotFeedback]);
 
   // ── Manual next shot (tap on result overlay) ─────────────
   const handleNextShot = useCallback(() => {
@@ -150,10 +259,11 @@ export default function GameplayScreen() {
       clearTimeout(resultTimerRef.current);
       resultTimerRef.current = null;
     }
+    clearShotFeedback();
     setBallPos({ x: 50, y: 85 });
     sounds.click();
     nextShot();
-  }, [phase, nextShot]);
+  }, [phase, nextShot, clearShotFeedback]);
 
   // ── Math timer ───────────────────────────────────────────
   useEffect(() => {
@@ -191,6 +301,7 @@ export default function GameplayScreen() {
 
   return (
     <div
+      className={shotFeedback === "impact" ? "shot-microimpact" : undefined}
       style={{
         position: "fixed",
         top: 0, left: 0, right: 0, bottom: 0,
@@ -198,7 +309,7 @@ export default function GameplayScreen() {
         height: "100dvh",
         display: "flex",
         flexDirection: "column",
-        background: "linear-gradient(180deg, #0f2d0f 0%, #0a1f0a 35%, #0d1b2a 65%, #080e1a 100%)",
+        background: "linear-gradient(180deg, #050A18 0%, #07152A 42%, #092C32 72%, #071219 100%)",
         overflow: "hidden",
         maxWidth: "430px",
         margin: "0 auto",
@@ -277,6 +388,28 @@ export default function GameplayScreen() {
           </span>
         </div>
 
+        {/* Session mission: a short goal keeps the next action meaningful. */}
+        <div
+          aria-label={`Misión de la cancha: ${playerProfile.missionProgress} de 3 goles`}
+          style={{
+            marginTop: 5,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+            padding: "4px 9px",
+            borderRadius: 999,
+            background: "rgba(125,255,214,0.1)",
+            border: "1px solid rgba(125,255,214,0.35)",
+            color: "#D9FFF5",
+            fontSize: 10,
+            fontWeight: 900,
+          }}
+        >
+          <span>🎯 Misión: marca 3 goles</span>
+          <span style={{ color: "#7DFFD6" }}>{playerProfile.missionProgress}/3 · +15🪙 +1⭐</span>
+        </div>
+
         {/* Combo badge */}
         <AnimatePresence>
           {combo > 1 && (
@@ -334,6 +467,30 @@ export default function GameplayScreen() {
         </AnimatePresence>
       </div>
 
+      {flowNotice && (
+        <motion.div
+          role="status"
+          aria-live="polite"
+          initial={{ opacity: 0, y: -4 }}
+          animate={{ opacity: 1, y: 0 }}
+          style={{
+            alignSelf: "center",
+            margin: "0 12px 4px",
+            padding: "4px 10px",
+            borderRadius: 99,
+            background: "rgba(77,208,225,0.14)",
+            border: "1px solid rgba(77,208,225,0.5)",
+            color: "#BDF7FF",
+            fontSize: 11,
+            fontWeight: 800,
+            textAlign: "center",
+            zIndex: 20,
+          }}
+        >
+          {flowNotice}
+        </motion.div>
+      )}
+
       {/* ── GOAL AREA (dominant — fills remaining space) ── */}
       <div
         style={{
@@ -353,16 +510,16 @@ export default function GameplayScreen() {
             width: "100%",
             height: "100%",
             maxWidth: 420,
-            borderRadius: 18,
+            borderRadius: 14,
             overflow: "hidden",
             border: phase === "aiming"
-              ? "4px solid #FFD700"
+              ? "2px solid rgba(255,215,0,0.88)"
               : phase === "shooting"
-              ? "4px solid #2ECC40"
-              : "4px solid rgba(255,255,255,0.15)",
+              ? "2px solid rgba(46,204,64,0.8)"
+              : "2px solid rgba(159,220,232,0.28)",
             boxShadow: phase === "aiming"
-              ? "0 0 32px rgba(255,215,0,0.5), inset 0 0 20px rgba(255,215,0,0.1)"
-              : "0 0 20px rgba(0,0,0,0.5)",
+              ? "0 0 22px rgba(255,215,0,0.22), inset 0 0 28px rgba(6,18,35,0.24)"
+              : "0 14px 36px rgba(0,0,0,0.42), inset 0 0 28px rgba(3,12,24,0.3)",
             transition: "border-color 0.3s, box-shadow 0.3s",
           }}
         >
@@ -378,68 +535,18 @@ export default function GameplayScreen() {
             }}
           />
 
-          {/* Light overlay to keep cells visible over the bright goal image */}
+          {/* Contrast veil keeps the target labels legible without adding a grid. */}
           <div style={{
             position: "absolute", inset: 0,
-            background: "rgba(0,0,0,0.15)",
+            background: "linear-gradient(180deg, rgba(2,8,20,0.08) 0%, rgba(2,12,25,0.05) 45%, rgba(2,10,18,0.26) 100%)",
             pointerEvents: "none",
           }} />
 
-          {/* Axis labels — Y axis (left side) */}
-          {gridCoords.filter(c => c.x === gridMin).map((c) => {
-            const cellH = 100 / rows;
-            const rowIdx = gridMax - c.y;
-            const topPct = rowIdx * cellH + cellH / 2;
-            return (
-              <div
-                key={`y-${c.y}`}
-                style={{
-                  position: "absolute",
-                  left: 3,
-                  top: `${topPct}%`,
-                  transform: "translateY(-50%)",
-                  color: "rgba(255,255,255,0.6)",
-                  fontSize: 9,
-                  fontWeight: 900,
-                  fontFamily: "'Fredoka One', cursive",
-                  pointerEvents: "none",
-                  zIndex: 5,
-                  lineHeight: 1,
-                }}
-              >
-                {c.y}
-              </div>
-            );
-          })}
+          {shotFeedback === "flash" && (
+            <div className="shot-flash" aria-hidden="true" />
+          )}
 
-          {/* Axis labels — X axis (bottom) */}
-          {gridCoords.filter(c => c.y === gridMin).map((c) => {
-            const cellW = 100 / cols;
-            const colIdx = c.x - gridMin;
-            const leftPct = colIdx * cellW + cellW / 2;
-            return (
-              <div
-                key={`x-${c.x}`}
-                style={{
-                  position: "absolute",
-                  bottom: 3,
-                  left: `${leftPct}%`,
-                  transform: "translateX(-50%)",
-                  color: "rgba(255,255,255,0.6)",
-                  fontSize: 9,
-                  fontWeight: 900,
-                  fontFamily: "'Fredoka One', cursive",
-                  pointerEvents: "none",
-                  zIndex: 5,
-                  lineHeight: 1,
-                }}
-              >
-                {c.x}
-              </div>
-            );
-          })}
-
-          {/* Grid cells — absolute positioned to fill the goal */}
+          {/* Transparent target zones — the grid is only semantic, never a visible mesh. */}
           <div
             style={{
               position: "absolute",
@@ -447,8 +554,8 @@ export default function GameplayScreen() {
               display: "grid",
               gridTemplateColumns: `repeat(${cols}, 1fr)`,
               gridTemplateRows: `repeat(${rows}, 1fr)`,
-              gap: 2,
-              padding: 2,
+              gap: 0,
+              padding: 0,
             }}
           >
             {gridCoords.map(({ x, y }) => {
@@ -458,39 +565,43 @@ export default function GameplayScreen() {
               return (
                 <button
                   key={`${x},${y}`}
+                  className="goal-target-zone"
                   onClick={() => handleCellTap(x, y)}
                   aria-label={`Apuntar a coordenada ${x}, ${y}`}
                   aria-pressed={isSelected}
                   disabled={!canTap}
                   style={{
                     position: "relative",
-                    borderRadius: 6,
-                    border: isSelected
-                      ? "3px solid #FF6B35"
-                      : "2px solid rgba(255,255,255,0.55)",
+                    borderRadius: 12,
+                    border: isSelected ? "2px solid #FF6B35" : "1px solid transparent",
                     background: isSelected
-                      ? "rgba(255,107,53,0.55)"
-                      : canTap
-                      ? "rgba(0,0,0,0.25)"
-                      : "rgba(0,0,0,0.1)",
+                      ? "linear-gradient(145deg, rgba(255,107,53,0.46), rgba(155,45,30,0.28))"
+                      : "transparent",
                     cursor: canTap ? "pointer" : "default",
                     touchAction: "manipulation",
                     WebkitTapHighlightColor: "transparent",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    transition: "background 0.15s, border-color 0.15s",
-                    boxShadow: isSelected ? "0 0 12px rgba(255,107,53,0.6), inset 0 0 8px rgba(255,107,53,0.3)" : "none",
+                    transition: "background 0.18s, border-color 0.18s, box-shadow 0.18s",
+                    boxShadow: isSelected ? "0 0 18px rgba(255,107,53,0.42), inset 0 0 18px rgba(255,107,53,0.18)" : "none",
                   }}
                 >
                   {/* Coordinate label — always visible */}
                   <span
                     style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      padding: "2px 4px",
+                      borderRadius: 999,
+                      background: isSelected ? "rgba(42,12,7,0.74)" : "rgba(2,9,20,0.38)",
+                      border: isSelected ? "1px solid rgba(255,215,0,0.82)" : "1px solid rgba(255,255,255,0.14)",
+                      backdropFilter: "blur(2px)",
                       fontFamily: "'Fredoka One', cursive",
-                      fontSize: "clamp(10px, 2.8vw, 16px)",
-                      fontWeight: 900,
-                      color: isSelected ? "#FFD700" : "white",
-                      textShadow: "0 0 6px rgba(0,0,0,1), 1px 1px 0 rgba(0,0,0,1), -1px -1px 0 rgba(0,0,0,1)",
+                      fontSize: "clamp(7px, 1.65vw, 9px)",
+                      fontWeight: 800,
+                      color: isSelected ? "#FFD700" : "rgba(255,255,255,0.74)",
+                      textShadow: "0 1px 4px rgba(0,0,0,0.95)",
                       lineHeight: 1,
                       pointerEvents: "none",
                       userSelect: "none",
@@ -506,9 +617,9 @@ export default function GameplayScreen() {
                       transition={{ duration: 1, repeat: Infinity }}
                       style={{
                         position: "absolute",
-                        inset: -4,
-                        borderRadius: 10,
-                        border: "3px solid #FF6B35",
+                        inset: "8%",
+                        borderRadius: 16,
+                        border: "2px solid rgba(255,107,53,0.92)",
                         pointerEvents: "none",
                       }}
                     />
@@ -524,7 +635,7 @@ export default function GameplayScreen() {
               style={{
                 position: "absolute",
                 bottom: "8%",
-                left: `${keeperX}%`,
+                left: `${keeperDisplayX}%`,
                 transform: "translateX(-50%)",
                 zIndex: 15,
                 pointerEvents: "none",
@@ -534,12 +645,65 @@ export default function GameplayScreen() {
                 src={KEEPER_IMG}
                 alt="Portero"
                 style={{
-                  width: 56, height: 56,
+                  width: 88, height: 88,
                   objectFit: "contain",
-                  filter: "drop-shadow(0 4px 8px rgba(0,0,0,0.8))",
+                  filter: "drop-shadow(0 5px 10px rgba(0,0,0,0.9)) saturate(1.08)",
                 }}
               />
             </motion.div>
+          )}
+
+          {/* Trajectory and destination: both use the engine's resolved landing point. */}
+          {ball.inFlight && lastShotResult && (
+            <>
+              <div className="shot-trajectory-blur" aria-hidden="true">
+                {lastShotResult.trajectoryPoints.filter((_, index) => index % 2 === 0).map((point, index) => (
+                  <span
+                    key={`shot-trail-${index}`}
+                    style={{
+                      left: `${point.x * 100}%`,
+                      top: `${point.y * 100}%`,
+                      animationDelay: `${index * 10}ms`,
+                    }}
+                  />
+                ))}
+              </div>
+              <div
+                className="shot-destination-marker"
+                aria-hidden="true"
+                style={{
+                  left: `${lastShotResult.landingPoint.x * 100}%`,
+                  top: `${lastShotResult.landingPoint.y * 100}%`,
+                }}
+              >
+                <span />
+              </div>
+            </>
+          )}
+
+          {/* Math Power trail — rendered from the same resolved trajectory. */}
+          {ball.inFlight && lastShotResult && flightPower && powerVisual && (
+            <div aria-hidden="true" style={{ position: "absolute", inset: 0, zIndex: 24, pointerEvents: "none" }}>
+              {lastShotResult.trajectoryPoints.slice(0, -1).map((point, index) => (
+                <motion.span
+                  key={`power-trail-${index}`}
+                  initial={{ opacity: 0, scale: 0.3 }}
+                  animate={{ opacity: [0.15, 0.8, 0.15], scale: [0.35, 1, 0.35] }}
+                  transition={{ duration: 0.7, repeat: Infinity, delay: index * 0.025 }}
+                  style={{
+                    position: "absolute",
+                    left: `${point.x * 100}%`,
+                    top: `${point.y * 100}%`,
+                    width: flightPower === "perfect" ? 11 : 7,
+                    height: flightPower === "perfect" ? 11 : 7,
+                    borderRadius: "50%",
+                    background: powerVisual.trail,
+                    boxShadow: `0 0 10px ${powerVisual.glow}`,
+                    transform: "translate(-50%, -50%)",
+                  }}
+                />
+              ))}
+            </div>
           )}
 
           {/* Ball in flight */}
@@ -556,9 +720,30 @@ export default function GameplayScreen() {
                   pointerEvents: "none",
                 }}
                 animate={{ rotate: 360 }}
-                transition={{ duration: 0.4, repeat: Infinity, ease: "linear" }}
+                transition={{ duration: lastShotResult?.input.mathPower === "turbo" ? 0.22 : 0.4, repeat: Infinity, ease: "linear" }}
               >
-                <img src={BALL_IMG} alt="Balón" style={{ width: "100%", height: "100%", filter: "drop-shadow(0 3px 8px rgba(0,0,0,0.9))" }} />
+                {lastShotResult?.input.mathPower && (
+                  <motion.span
+                    aria-hidden="true"
+                    animate={{ scale: [0.85, 1.2, 0.85], opacity: [0.35, 0.7, 0.35] }}
+                    transition={{ duration: lastShotResult.input.mathPower === "perfect" ? 0.55 : 0.85, repeat: Infinity }}
+                    style={{
+                      position: "absolute", inset: -12, borderRadius: "50%",
+                      background: POWER_VISUALS[lastShotResult.input.mathPower].glow,
+                      boxShadow: `0 0 20px ${POWER_VISUALS[lastShotResult.input.mathPower].glow}`,
+                    }}
+                  />
+                )}
+                <img
+                  src={BALL_IMG}
+                  alt="Balón"
+                  style={{
+                    width: "100%", height: "100%",
+                    filter: lastShotResult?.input.mathPower
+                      ? `drop-shadow(0 0 8px ${POWER_VISUALS[lastShotResult.input.mathPower].accent}) drop-shadow(0 3px 8px rgba(0,0,0,0.9))`
+                      : "drop-shadow(0 3px 8px rgba(0,0,0,0.9))",
+                  }}
+                />
               </motion.div>
             )}
           </AnimatePresence>
@@ -592,6 +777,13 @@ export default function GameplayScreen() {
                   gap: 12,
                 }}
               >
+                {burstKind && (
+                  <MicrovictoryBurst
+                    kind={burstKind}
+                    eventKey={`${shotsTaken}-${burstKind}`}
+                  />
+                )}
+
                 {/* Main result text */}
                 <motion.div
                   initial={{ y: -20, opacity: 0 }}
@@ -611,6 +803,67 @@ export default function GameplayScreen() {
                     : lastShotResult.blockedByWall ? "🚧 ¡Bloqueado!"
                     : "❌ ¡Afuera!"}
                 </motion.div>
+
+                <div
+                  aria-live="polite"
+                  style={{
+                    maxWidth: "min(88vw, 340px)",
+                    textAlign: "center",
+                    fontFamily: "'Nunito', sans-serif",
+                    fontSize: 15,
+                    lineHeight: 1.35,
+                    color: "rgba(255,255,255,0.95)",
+                    textShadow: "1px 1px 2px rgba(0,0,0,0.7)",
+                  }}
+                >
+                  <div>
+                    Apuntaste a ({lastShotResult.targetCoord.x}, {lastShotResult.targetCoord.y}) · El balón llegó a ({lastShotResult.actualCoord.x}, {lastShotResult.actualCoord.y})
+                  </div>
+                  {lastShotResult.input.mathPower && (
+                    <div style={{
+                      margin: "10px auto 4px",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 7,
+                      padding: "6px 12px",
+                      borderRadius: 999,
+                      background: `${POWER_VISUALS[lastShotResult.input.mathPower].accent}33`,
+                      border: `1px solid ${POWER_VISUALS[lastShotResult.input.mathPower].accent}`,
+                      color: POWER_VISUALS[lastShotResult.input.mathPower].accent,
+                      fontWeight: 900,
+                    }}>
+                      {MATH_POWER_META[lastShotResult.input.mathPower].icon} {MATH_POWER_META[lastShotResult.input.mathPower].label}
+                    </div>
+                  )}
+                  <div style={{ marginTop: 4, color: lastShotResult.mathCorrect ? "#D8FFD8" : "#FFE0E0" }}>
+                    {lastShotResult.mathCorrect ? "¡Buen cálculo! El poder se conserva aunque el tiro sea detenido. " : "La respuesta incorrecta redujo la precisión. "}
+                    {getReasonLabel(lastShotResult.reasonCode)}
+                  </div>
+                  {lastShotResult.input.mathPower && (
+                    <div style={{ marginTop: 3, fontSize: 13, opacity: 0.9 }}>
+                      {MATH_POWER_META[lastShotResult.input.mathPower].description}
+                    </div>
+                  )}
+                </div>
+
+                {lastShotResult.scored && (
+                  <motion.div
+                    initial={{ scale: 0.8, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    transition={{ delay: 0.18, type: "spring", stiffness: 350 }}
+                    style={{
+                      padding: "6px 14px",
+                      borderRadius: 999,
+                      background: "rgba(255,209,102,0.2)",
+                      border: "1px solid rgba(255,209,102,0.75)",
+                      color: "#FFE7A3",
+                      fontSize: 13,
+                      fontWeight: 900,
+                    }}
+                  >
+                    🎯 Misión: {playerProfile.missionProgress === 0 ? "¡completada! +15 monedas +1 estrella" : `${playerProfile.missionProgress}/3 goles`}
+                  </motion.div>
+                )}
 
                 {/* Combo badge */}
                 {lastShotResult.scored && combo > 1 && (
@@ -730,7 +983,7 @@ export default function GameplayScreen() {
                 <div style={{ color: "#7B8FF7", fontSize: 11, fontWeight: 700 }}>Apuntando a</div>
                 <div style={{
                   fontFamily: "'Fredoka One', cursive",
-                  fontSize: 28, fontWeight: 900, color: "white",
+                  fontSize: 22, fontWeight: 900, color: "white",
                   lineHeight: 1,
                 }}>
                   ({targetCoord.x}, {targetCoord.y})
@@ -949,32 +1202,40 @@ function MathPanel({
 }
 
 // ── Particle Layer ───────────────────────────────────────────
-function ParticleLayer({ particles }: { particles: any[] }) {
+function ParticleLayer({ particles }: { particles: Particle[] }) {
   return (
     <div style={{ position: "absolute", inset: 0, zIndex: 40, overflow: "hidden", pointerEvents: "none" }}>
-      {particles.map((p) => (
-        <div
-          key={p.id}
-          style={{
-            position: "absolute",
-            left: `${p.x * 100}%`,
-            top: `${p.y * 100}%`,
-            width: p.size,
-            height: p.size,
-            borderRadius: 2,
-            background: p.color,
-            opacity: Math.max(0, p.life / 60),
-            transform: `rotate(${p.rotation}deg)`,
-            pointerEvents: "none",
-          }}
-        />
-      ))}
+      {particles.map((p) => {
+        const isCoin = p.type === "coin";
+        const isStar = p.type === "star";
+        const isSpark = p.type === "spark";
+        return (
+          <div
+            key={p.id}
+            style={{
+              position: "absolute",
+              left: `${p.x * 100}%`,
+              top: `${p.y * 100}%`,
+              width: p.size,
+              height: p.size,
+              borderRadius: isCoin || isSpark ? "50%" : isStar ? "35%" : 2,
+              background: isCoin ? `radial-gradient(circle at 35% 30%, #FFF3A3 0 18%, ${p.color} 45%, #B8860B 100%)` : p.color,
+              border: isCoin ? "1px solid rgba(255,255,255,0.85)" : undefined,
+              clipPath: isStar ? "polygon(50% 0%, 61% 36%, 98% 36%, 68% 58%, 79% 100%, 50% 73%, 21% 100%, 32% 58%, 2% 36%, 39% 36%)" : undefined,
+              opacity: Math.max(0, p.life / p.maxLife),
+              transform: `rotate(${(1 - p.life) * 180}deg)`,
+              boxShadow: isSpark || isCoin ? `0 0 ${Math.max(4, p.size * 1.5)}px ${p.color}` : undefined,
+              pointerEvents: "none",
+            }}
+          />
+        );
+      })}
     </div>
   );
 }
 
 // ── Floating Text Layer ──────────────────────────────────────
-function FloatingTextLayer({ texts }: { texts: any[] }) {
+function FloatingTextLayer({ texts }: { texts: FloatingText[] }) {
   return (
     <div style={{ position: "absolute", inset: 0, zIndex: 45, overflow: "hidden", pointerEvents: "none" }}>
       {texts.map((t) => (
@@ -986,11 +1247,11 @@ function FloatingTextLayer({ texts }: { texts: any[] }) {
             top: `${t.y * 100}%`,
             transform: "translate(-50%, -50%)",
             fontFamily: "'Fredoka One', cursive",
-            fontSize: t.size || 18,
+            fontSize: t.size === "xl" ? 30 : t.size === "lg" ? 24 : t.size === "md" ? 18 : 14,
             fontWeight: 900,
-            color: t.color || "#FFD700",
+            color: t.color,
             textShadow: "2px 2px 0 rgba(0,0,0,0.8)",
-            opacity: Math.max(0, t.life / 90),
+            opacity: Math.max(0, t.life / t.maxLife),
             pointerEvents: "none",
             whiteSpace: "nowrap",
           }}

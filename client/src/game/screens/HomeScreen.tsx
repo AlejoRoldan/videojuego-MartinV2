@@ -14,9 +14,8 @@ import {
   type GamePace,
 } from "../engine/gamePace";
 
-const HOME_BG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663638628604/YvKFUvGtEph4XyT2Rde5AJ/game-home-bg-KNACZmxggfLAynjyvZYg3e.webp";
-const PLAYER_IMG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663638628604/YvKFUvGtEph4XyT2Rde5AJ/game-player-SZu757xkaDBb7ZA9f4TAtJ.webp";
-const GAME_PACES: GamePace[] = ["easy", "medium", "hard"];
+const HOME_BG = "/math-stadium-hero.png";
+const GAME_PACES: GamePace[] = ["easy", "medium", "match", "hard"];
 
 export default function HomeScreen() {
   const { goToScreen, playerProfile } = useGame();
@@ -119,15 +118,19 @@ export default function HomeScreen() {
           </div>
         </motion.div>
 
-        <motion.img
-          src={PLAYER_IMG}
-          alt="Jugador"
-          initial={{ y: 50, opacity: 0 }}
+        <motion.div
+          initial={{ y: 20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          transition={{ duration: 0.6, delay: 0.3, ease: [0.23, 1, 0.32, 1] }}
-          className="w-32 h-auto drop-shadow-2xl"
-          style={{ filter: "drop-shadow(0 8px 16px rgba(0,0,0,0.5))" }}
-        />
+          transition={{ duration: 0.5, delay: 0.25 }}
+          className="mt-2 rounded-full px-4 py-1.5"
+          style={{
+            background: "rgba(5, 12, 28, 0.78)",
+            border: "2px solid rgba(255,215,0,0.65)",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+          }}
+        >
+          <span className="text-white text-xs font-black">Tu próximo gol empieza con una buena idea</span>
+        </motion.div>
       </div>
 
       <motion.div
@@ -136,6 +139,8 @@ export default function HomeScreen() {
         transition={{ duration: 0.5, delay: 0.4, ease: [0.23, 1, 0.32, 1] }}
         className="relative z-10 w-full max-w-sm px-4 pb-6 flex flex-col gap-2"
       >
+        <MissionCard progress={playerProfile.missionProgress} completions={playerProfile.missionCompletions} />
+
         <div
           className="rounded-2xl px-3 py-2"
           style={{
@@ -149,10 +154,10 @@ export default function HomeScreen() {
             <span className="text-white/70 text-[10px]">Puedes cambiarlo cuando quieras</span>
           </div>
 
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className="grid grid-cols-4 gap-1">
             {GAME_PACES.map((pace) => {
               const selected = pace === gamePace;
-              const icon = pace === "easy" ? "😌" : pace === "medium" ? "⚡" : "🔥";
+              const icon = pace === "easy" ? "😌" : pace === "medium" ? "⚡" : pace === "match" ? "🏟️" : "🔥";
               return (
                 <motion.button
                   key={pace}
@@ -169,7 +174,7 @@ export default function HomeScreen() {
                   }}
                 >
                   <span className="text-lg leading-none">{icon}</span>
-                  <span className="text-[11px] font-black mt-1">{GAME_PACE_CONFIG[pace].label}</span>
+                  <span className="text-[10px] leading-tight font-black mt-1">{GAME_PACE_CONFIG[pace].label}</span>
                 </motion.button>
               );
             })}
@@ -220,6 +225,33 @@ export default function HomeScreen() {
       </motion.div>
 
       <FloatingMathSymbols />
+    </div>
+  );
+}
+
+function MissionCard({ progress, completions }: { progress: number; completions: number }) {
+  const percent = Math.min(100, (progress / 3) * 100);
+  return (
+    <div
+      aria-label={`Misión: marca tres goles. Progreso ${progress} de 3`}
+      className="rounded-2xl px-3 py-2"
+      style={{
+        background: "linear-gradient(110deg, rgba(23, 38, 88, 0.94), rgba(10, 93, 76, 0.9))",
+        border: "2px solid rgba(125, 255, 214, 0.6)",
+        boxShadow: "0 5px 16px rgba(0,0,0,0.32)",
+      }}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-[#7DFFD6] text-[11px] font-black tracking-wide">🎯 MISIÓN DE LA CANCHA</div>
+          <div className="text-white text-xs font-bold mt-0.5">Marca 3 goles y gana +15 monedas +1 estrella</div>
+        </div>
+        <div className="text-white font-black text-lg" style={{ fontFamily: "'Fredoka One', cursive" }}>{progress}/3</div>
+      </div>
+      <div className="h-2 rounded-full overflow-hidden mt-2" style={{ background: "rgba(0,0,0,0.3)" }}>
+        <motion.div animate={{ width: `${percent}%` }} transition={{ duration: 0.35 }} className="h-full rounded-full" style={{ background: "linear-gradient(90deg, #7DFFD6, #FFD166)" }} />
+      </div>
+      <div className="text-white/65 text-[10px] mt-1">{completions > 0 ? `Misiones completadas: ${completions}` : "Una meta corta para empezar con impulso"}</div>
     </div>
   );
 }

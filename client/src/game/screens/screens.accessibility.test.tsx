@@ -35,6 +35,7 @@ describe("screen accessibility contracts", () => {
     expect(html).toContain("JUGAR");
     expect(html.match(/<button/g)?.length).toBeGreaterThanOrEqual(7);
     expect(html).toContain('aria-pressed="true"');
+    expect(html).toContain("Ritmo de partido");
   });
 
   it("announces navigation and level availability", () => {

@@ -4,33 +4,27 @@
 // =============================================================
 
 import React, { createContext, useContext, useReducer, useCallback, useRef, useEffect, useState } from "react";
-import type { GameState, GameAction, Vec2 } from "./types";
+import type {
+  GameState,
+  GameAction,
+  Vec2,
+  FlowInterventionEvent,
+  MathAnsweredEvent,
+  ShotResolvedEvent,
+} from "./types";
 import { gameReducer, initialGameState } from "./gameReducer";
 import { resolveShotResult } from "./physics";
 import { sounds } from "./soundSystem";
-import { ASSISTANCE_THRESHOLDS, getMathAssistanceStage, getRetrySeconds, loadGamePace } from "./gamePace";
+import {
+  getAssistanceThresholds,
+  getAutoShootDelayMs,
+  getMathAssistanceStage,
+  getRetrySeconds,
+  getShotAnimationDuration,
+  loadGamePace,
+} from "./gamePace";
 import { calculateRemainingMathTime, resolveMathCorrect, scheduleAutoShoot } from "./gameFlow";
-
-interface PlayerProfile {
-  name: string; level: number; xp: number; coins: number; stars: number;
-  totalGoals: number; totalShots: number; unlockedLevels: number[];
-  completedLevels: Record<number, { stars: number; bestScore: number }>;
-  achievements: string[];
-}
-
-const defaultProfile: PlayerProfile = {
-  name: "Martín", level: 1, xp: 0, coins: 0, stars: 0, totalGoals: 0, totalShots: 0,
-  unlockedLevels: [1], completedLevels: {}, achievements: [],
-};
-
-function loadProfile(): PlayerProfile {
-  try {
-    const saved = localStorage.getItem("tlm_profile");
-    if (saved) return { ...defaultProfile, ...JSON.parse(saved) };
-  } catch {}
-  return defaultProfile;
-}
-function saveProfile(profile: PlayerProfile) { try { localStorage.setItem("tlm_profile", JSON.stringify(profile)); } catch {} }
+import { DEFAULT_PROFILE, loadProfile, saveProfile, type PlayerProfile } from "./profileMigration";
 
 interface GameContextValue {
   state: GameState;
@@ -58,6 +52,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   const assistanceTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const mathStartedAtRef = useRef<number | null>(null);
   const inFlightRef = useRef(false);
+  const sessionIdRef = useRef(`session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
 
   const clearAssistanceTimers = useCallback(() => {
     assistanceTimersRef.current.forEach(clearTimeout);
@@ -65,7 +60,11 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const updateProfile = useCallback((updates: Partial<PlayerProfile>) => {
-    setPlayerProfile((prev) => { const next = { ...prev, ...updates }; saveProfile(next); return next; });
+    setPlayerProfile((prev) => {
+      const next = { ...DEFAULT_PROFILE, ...prev, ...updates };
+      saveProfile(next);
+      return next;
+    });
   }, []);
   const goToScreen = useCallback((screen: GameState["screen"]) => dispatch({ type: "SET_SCREEN", screen }), []);
   const startLevel = useCallback((levelId: number) => {
@@ -74,6 +73,33 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     if (directionShootTimerRef.current) clearTimeout(directionShootTimerRef.current);
     dispatch({ type: "START_LEVEL", levelId });
   }, [clearAssistanceTimers]);
+
+  const resolveCurrentShot = useCallback(() => {
+    if (inFlightRef.current) return;
+    const s = stateRef.current;
+    if (!s.targetCoord || !s.levelConfig) return;
+    const mathCorrect = resolveMathCorrect(s.lastMathCorrect, s.levelConfig.concept);
+    const result = resolveShotResult(
+      s.targetCoord,
+      mathCorrect,
+      s.ball.power,
+      s.ball.spin,
+      s.goalkeeper,
+      s.wall,
+      {
+        keeperSpeed: s.levelConfig.keeperSpeed,
+        hasKeeper: s.levelConfig.hasKeeper,
+        wind: s.levelConfig.wind,
+        windStrength: s.levelConfig.windStrength,
+        gridQuadrants: s.levelConfig.gridQuadrants,
+      },
+      s.currentMathPower,
+      s.shotsTaken + 1,
+      s.runtimeModifiers,
+    );
+    inFlightRef.current = true;
+    dispatch({ type: "SHOOT", resolution: result });
+  }, []);
 
   const setTarget = useCallback((coord: Vec2) => {
     dispatch({ type: "SET_TARGET", coord });
@@ -84,16 +110,15 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         dispatch,
         isInFlight: () => inFlightRef.current,
         markInFlight: () => { inFlightRef.current = true; },
+        onShoot: resolveCurrentShot,
         delayMs: 350,
       });
     }
-  }, []);
+  }, [resolveCurrentShot]);
 
   const shoot = useCallback(() => {
-    if (inFlightRef.current) return;
-    inFlightRef.current = true;
-    dispatch({ type: "SHOOT" });
-  }, []);
+    resolveCurrentShot();
+  }, [resolveCurrentShot]);
 
   const submitMath = useCallback((answer: number, timeLeft?: number, usedRetry?: boolean) => {
     const s = stateRef.current;
@@ -112,17 +137,38 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       ? calculateRemainingMathTime(s.currentChallenge.timeLimit, mathStartedAtRef.current)
       : undefined;
     const effectiveTimeLeft = timeLeft ?? derivedTimeLeft;
+    const responseTimeMs = s.currentChallenge && effectiveTimeLeft !== undefined
+      ? Math.max(0, (s.currentChallenge.timeLimit - effectiveTimeLeft) * 1000)
+      : 0;
+    const assistanceStage = s.currentChallenge?.assistanceStage;
+    const mathEvent: MathAnsweredEvent = {
+      id: `${sessionIdRef.current}-math-${s.shotsTaken + 1}`,
+      schemaVersion: 1,
+      type: "math_answered",
+      occurredAt: new Date().toISOString(),
+      sessionId: sessionIdRef.current,
+      levelId: s.currentLevel ?? undefined,
+      worldId: s.levelConfig?.worldId,
+      domain: s.currentChallenge?.type ?? "multiplication",
+      correct: answer === s.currentChallenge?.answer,
+      responseTimeMs,
+      assistanceStage: assistanceStage === "hint" || assistanceStage === "visual" || assistanceStage === "urgent" ? assistanceStage : "none",
+      usedRetry: usedRetry ?? s.currentChallenge?.retryGranted ?? false,
+      difficulty: s.levelConfig?.mathDifficulty ?? "easy",
+    };
 
     clearAssistanceTimers();
     mathStartedAtRef.current = null;
-    dispatch({ type: "SUBMIT_MATH", answer, timeLeft: effectiveTimeLeft, usedRetry: usedRetry ?? s.currentChallenge?.retryGranted ?? false });
+    dispatch({ type: "SUBMIT_MATH", answer, timeLeft: effectiveTimeLeft, responseTimeMs, usedRetry: usedRetry ?? s.currentChallenge?.retryGranted ?? false, event: mathEvent });
     if (mathSubmitTimerRef.current) clearTimeout(mathSubmitTimerRef.current);
     mathSubmitTimerRef.current = scheduleAutoShoot({
       dispatch,
       isInFlight: () => inFlightRef.current,
       markInFlight: () => { inFlightRef.current = true; },
+      onShoot: resolveCurrentShot,
+      delayMs: getAutoShootDelayMs(loadGamePace()),
     });
-  }, [clearAssistanceTimers]);
+  }, [clearAssistanceTimers, resolveCurrentShot]);
 
   useEffect(() => {
     clearAssistanceTimers();
@@ -133,46 +179,72 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     mathStartedAtRef.current = Date.now();
     if (state.currentChallenge.retryGranted) return;
     const timeLimit = state.currentChallenge.timeLimit;
-    const initialStage = getMathAssistanceStage(timeLimit);
+    const assistanceLeadSeconds = state.runtimeModifiers.assistanceLeadSeconds;
+    const initialStage = getMathAssistanceStage(timeLimit + assistanceLeadSeconds, timeLimit);
+    const assistanceThresholds = getAssistanceThresholds(timeLimit);
     if (initialStage === "hint") dispatch({ type: "MATH_ASSISTANCE", stage: "hint" });
     if (initialStage === "visual") dispatch({ type: "MATH_ASSISTANCE", stage: "visual" });
     if (initialStage === "urgent") dispatch({ type: "MATH_ASSISTANCE", stage: "urgent" });
     const scheduleStage = (stage: "hint" | "visual" | "urgent", remainingSeconds: number) => {
-      if (timeLimit <= remainingSeconds) return;
+      const effectiveRemainingSeconds = remainingSeconds + assistanceLeadSeconds;
+      if (timeLimit <= effectiveRemainingSeconds) return;
       const timer = setTimeout(() => {
         const current = stateRef.current;
         if (current.phase === "math" && !current.currentChallenge?.retryGranted) dispatch({ type: "MATH_ASSISTANCE", stage });
-      }, (timeLimit - remainingSeconds) * 1000);
+      }, (timeLimit - effectiveRemainingSeconds) * 1000);
       assistanceTimersRef.current.push(timer);
     };
-    scheduleStage("hint", ASSISTANCE_THRESHOLDS.hint);
-    scheduleStage("visual", ASSISTANCE_THRESHOLDS.visual);
-    scheduleStage("urgent", ASSISTANCE_THRESHOLDS.urgent);
+    scheduleStage("hint", assistanceThresholds.hint);
+    scheduleStage("visual", assistanceThresholds.visual);
+    scheduleStage("urgent", assistanceThresholds.urgent);
     return clearAssistanceTimers;
-  }, [state.phase, state.currentChallenge?.question, state.currentChallenge?.timeLimit, state.currentChallenge?.retryGranted, clearAssistanceTimers]);
+  }, [state.phase, state.currentChallenge?.question, state.currentChallenge?.timeLimit, state.currentChallenge?.retryGranted, state.runtimeModifiers.assistanceLeadSeconds, clearAssistanceTimers]);
 
   useEffect(() => {
-    if (state.phase !== "shooting" || !state.ball.inFlight || !state.targetCoord || !state.levelConfig) return;
+    if (state.phase !== "shooting" || !state.ball.inFlight || !state.lastShotResult) return;
     if (shootTimerRef.current) clearTimeout(shootTimerRef.current);
+    const result = state.lastShotResult;
+    const animationDuration = getShotAnimationDuration(loadGamePace(), result.input.mathPower);
+    const shotEvent: ShotResolvedEvent = {
+      id: `${sessionIdRef.current}-shot-${state.shotsTaken + 1}`,
+      schemaVersion: 1,
+      type: "shot_resolved",
+      occurredAt: new Date().toISOString(),
+      sessionId: sessionIdRef.current,
+      levelId: state.currentLevel ?? undefined,
+      worldId: state.levelConfig?.worldId,
+      mathCorrect: result.mathCorrect,
+      targetCoord: result.targetCoord,
+      actualCoord: result.actualCoord,
+      outcome: result.outcome,
+      reasonCode: result.reasonCode,
+      mathPower: result.input.mathPower,
+      footballDifficulty: result.input.keeper.reach,
+    };
     shootTimerRef.current = setTimeout(() => {
-      const s = stateRef.current;
-      if (!s.targetCoord || !s.levelConfig) return;
-      // Never infer learning performance from ball physics. Power can change
-      // independently as new abilities are added to the game.
-      const mathCorrect = resolveMathCorrect(s.lastMathCorrect, s.levelConfig.concept);
-      const result = resolveShotResult(
-        s.targetCoord, mathCorrect, s.ball.power, s.ball.spin, s.goalkeeper, s.wall,
-        { keeperSpeed: s.levelConfig.keeperSpeed, wind: s.levelConfig.wind, windStrength: s.levelConfig.windStrength },
-        s.currentMathPower
-      );
-      dispatch({ type: "SHOT_COMPLETE", result });
+      dispatch({ type: "SHOT_COMPLETE", result, events: [shotEvent] });
+      const scored = result.scored ? 1 : 0;
+      const missionComplete = scored === 1 && playerProfile.missionProgress === 2;
+      if (missionComplete) {
+        sounds.coinEarned();
+        sounds.missionComplete();
+      }
       setPlayerProfile((prev) => {
-        const next = { ...prev, totalGoals: prev.totalGoals + (result.scored ? 1 : 0), totalShots: prev.totalShots + 1 };
+        const nextMissionProgress = (prev.missionProgress + scored) % 3;
+        const next = {
+          ...prev,
+          totalGoals: prev.totalGoals + scored,
+          totalShots: prev.totalShots + 1,
+          missionProgress: nextMissionProgress,
+          missionCompletions: prev.missionCompletions + (missionComplete ? 1 : 0),
+          coins: prev.coins + (missionComplete ? 15 : 0),
+          stars: prev.stars + (missionComplete ? 1 : 0),
+        };
         saveProfile(next); return next;
       });
-    }, state.currentMathPower === "perfect" ? 1500 : state.currentMathPower === "turbo" ? 900 : 1200);
+    }, animationDuration);
     return () => { if (shootTimerRef.current) clearTimeout(shootTimerRef.current); };
-  }, [state.phase, state.ball.inFlight, state.currentMathPower]);
+  }, [state.phase, state.ball.inFlight, state.lastShotResult]);
 
   useEffect(() => { if (state.phase === "aiming") inFlightRef.current = false; }, [state.phase]);
   useEffect(() => {
@@ -213,7 +285,26 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       dispatch({ type: "LEVEL_COMPLETE" });
     } else if (isLoss) {
       sounds.levelFailed(); dispatch({ type: "LEVEL_FAILED" });
-    } else dispatch({ type: "NEXT_SHOT" });
+    } else {
+      const intervention = s.pendingFlowIntervention;
+      const flowEvent: FlowInterventionEvent | undefined = intervention
+        ? {
+          id: `${sessionIdRef.current}-flow-${s.shotsTaken}`,
+          schemaVersion: 1,
+          type: "flow_intervention",
+          occurredAt: new Date().toISOString(),
+          sessionId: sessionIdRef.current,
+          levelId: s.currentLevel ?? undefined,
+          worldId: s.levelConfig?.worldId,
+          trigger: intervention.trigger,
+          axis: intervention.axis,
+          change: intervention.change,
+          windowMathSuccessRate: intervention.windowMathSuccessRate,
+          windowFootballSuccessRate: intervention.windowFootballSuccessRate,
+        }
+        : undefined;
+      dispatch({ type: "NEXT_SHOT", flowEvent });
+    }
   }, []);
 
   const resetGame = useCallback(() => {

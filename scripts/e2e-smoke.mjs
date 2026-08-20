@@ -137,6 +137,13 @@ try {
   await evaluate(`[...document.querySelectorAll("button")].find((el) => el.textContent.includes("JUGAR")).focus()`);
   await pressEnter();
   await waitFor(async () => (await evaluate("document.body.innerText")).includes("Seleccionar Nivel"), "Level selector did not open");
+  await evaluate(`localStorage.setItem("tlm_profile", JSON.stringify({ schemaVersion: 2, unlockedLevels: [1, 2] }))`);
+  await cdp.send("Page.reload");
+  await waitFor(async () => (await evaluate("document.readyState")) === "complete", "Profile seed reload did not finish");
+  await waitFor(async () => (await evaluate("document.body.innerText")).includes("TIRO LIBRE"), "Home screen did not restore after profile seed");
+  await evaluate(`[...document.querySelectorAll("button")].find((el) => el.textContent.includes("JUGAR")).focus()`);
+  await pressEnter();
+  await waitFor(async () => (await evaluate("document.body.innerText")).includes("Seleccionar Nivel"), "Level selector did not restore after profile seed");
 
   const accessibilityIssues = await evaluate(`(() => {
     const buttons = [...document.querySelectorAll("button")].filter((el) => !el.disabled);
@@ -148,7 +155,7 @@ try {
   assert(accessibilityIssues.unnamedButtons === 0, "An enabled button has no accessible name.");
   assert(accessibilityIssues.imagesWithoutAlt === 0, "An image has no alt attribute.");
 
-  await evaluate(`document.querySelector('[aria-label^="Jugar nivel 1:"]').click()`);
+  await evaluate(`document.querySelector('[aria-label^="Jugar nivel 2:"]').click()`);
   await waitFor(async () => (await evaluate(`document.querySelectorAll('[aria-label^="Apuntar a coordenada"]').length`)) > 0, "Gameplay grid did not render");
   const mobileLayout = await evaluate(`({
     viewportWidth: innerWidth,
@@ -158,7 +165,18 @@ try {
   assert(mobileLayout.contentWidth <= mobileLayout.viewportWidth + 1, "Gameplay overflows the mobile viewport.");
   assert(mobileLayout.gridButtons >= 9, "Gameplay grid has too few target cells.");
   await evaluate(`document.querySelector('[aria-label^="Apuntar a coordenada"]').click()`);
+  await waitFor(async () => (await evaluate(`document.querySelectorAll('[aria-label^="Responder "]').length`)) > 0, "Math challenge did not render");
+  const correctOption = await evaluate(`(() => {
+    const question = [...document.body.innerText.split("\\n")].map((line) => line.trim()).find((line) => /^\\d+ × \\d+ = \\?$/.test(line));
+    if (!question) return null;
+    const [, left, right] = question.match(/^(\\d+) × (\\d+) = \\?$/);
+    return Number(left) * Number(right);
+  })()`);
+  assert(Number.isFinite(correctOption), "Could not parse the multiplication challenge in the smoke test.");
+  await evaluate(`document.querySelector('[aria-label="Responder ${correctOption}"]').click()`);
   await waitFor(async () => /¡GOL!|¡Atajada!|¡Bloqueado!|¡Afuera!/.test(await evaluate("document.body.innerText")), "A complete shot did not reach its result", 8_000);
+  const mathPowerFeedback = await evaluate(`/PRECISIÓN|CURVA|TURBO|PERFECTO/.test(document.body.innerText)`);
+  assert(mathPowerFeedback, "Math Power feedback was not visible after a correct math answer.");
   await evaluate(`document.querySelector('[aria-label="Continuar al siguiente tiro"]').focus()`);
   await pressEnter();
   await waitFor(async () => (await evaluate(`document.querySelectorAll('[aria-label^="Apuntar a coordenada"]:not([disabled])').length`)) > 0, "Keyboard could not continue to the next shot");

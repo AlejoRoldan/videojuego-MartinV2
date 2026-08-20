@@ -9,14 +9,31 @@ function makeResult(overrides: Partial<ShotResult> = {}): ShotResult {
   return {
     scored: true,
     targetCoord: { x: 1, y: 1 },
+    targetPoint: { x: 0.1666666667, y: 0.8333333333 },
+    landingPoint: { x: 0.1666666667, y: 0.8333333333 },
     actualCoord: { x: 1, y: 1 },
     mathCorrect: true,
     powerUsed: 90,
     spinUsed: 0,
     savedByKeeper: false,
     blockedByWall: false,
-    trajectoryPoints: [],
+    trajectoryPoints: [{ x: 0.5, y: 0.92 }, { x: 0.1666666667, y: 0.8333333333 }],
     bonusMultiplier: 1.5,
+    outcome: "goal",
+    reasonCode: "clean_target",
+    appliedModifiers: [],
+    input: {
+      targetCoord: { x: 1, y: 1 },
+      gridQuadrants: 1,
+      mathCorrect: true,
+      basePower: 90,
+      spin: 0,
+      mathPower: null,
+      keeper: { position: { x: 0.5, y: 0.5 }, reach: 0.25 },
+      wall: [],
+      wind: { x: 0, y: 0 },
+      seed: 1,
+    },
     ...overrides,
   };
 }
@@ -110,6 +127,50 @@ describe("game reducer", () => {
     });
     expect(state.lastMathCorrect).toBe(true);
     expect(state.ball.power).toBe(85);
+    expect(state.currentMathPower).toBe("perfect");
+    expect(state.perfectStreak).toBe(1);
+    expect(state.mathPowerSequence).toBe(1);
+  });
+
+  it("resets Perfect streak after retry and preserves it between shots", () => {
+    let state = gameReducer(initialGameState, { type: "START_LEVEL", levelId: 3 });
+    state = gameReducer(state, { type: "SET_TARGET", coord: { x: 1, y: 1 } });
+    state = gameReducer(state, {
+      type: "SUBMIT_MATH",
+      answer: state.currentChallenge!.answer,
+      timeLeft: state.currentChallenge!.timeLimit,
+      usedRetry: true,
+    });
+    expect(state.perfectStreak).toBe(0);
+    expect(state.currentMathPower).not.toBe("perfect");
+
+    const next = gameReducer({ ...state, phase: "result" }, { type: "NEXT_SHOT" });
+    expect(next.perfectStreak).toBe(0);
+  });
+
+  it("emits Math Power spark particles for the resolved power", () => {
+    const base = gameReducer(initialGameState, { type: "START_LEVEL", levelId: 1 });
+    const result = makeResult({
+      input: { ...makeResult().input, mathPower: "curve" },
+    });
+    const state = gameReducer(base, { type: "SHOT_COMPLETE", result });
+    expect(state.particles.some((particle) => particle.type === "spark" && particle.color === "#B388FF")).toBe(true);
+  });
+
+  it("recognizes correct mathematics even when the shot is saved", () => {
+    const base = gameReducer(initialGameState, { type: "START_LEVEL", levelId: 1 });
+    const result = makeResult({
+      scored: false,
+      savedByKeeper: true,
+      outcome: "saved",
+      reasonCode: "keeper_reach",
+      mathCorrect: true,
+      bonusMultiplier: 1,
+      input: { ...makeResult().input, mathPower: "precision" },
+    });
+    const state = gameReducer(base, { type: "SHOT_COMPLETE", result });
+    expect(state.score).toBe(25);
+    expect(state.floatingTexts.some((item) => item.text.includes("Buen cálculo"))).toBe(true);
   });
 
   it("does not shoot without a target", () => {
@@ -125,6 +186,16 @@ describe("game reducer", () => {
     expect(state.ball.inFlight).toBe(true);
   });
 
+  it("stores the precomputed V9 resolution before the ball animation", () => {
+    let state = gameReducer(initialGameState, { type: "START_LEVEL", levelId: 1 });
+    state = gameReducer(state, { type: "SET_TARGET", coord: { x: 1, y: 1 } });
+    const result = makeResult({ outcome: "saved", scored: false, savedByKeeper: true, reasonCode: "keeper_reach" });
+    state = gameReducer(state, { type: "SHOOT", resolution: result });
+    expect(state.phase).toBe("shooting");
+    expect(state.lastShotResult).toBe(result);
+    expect(state.ball.trail).toEqual(result.trajectoryPoints);
+  });
+
   it("updates score, combo, shot counts and result state after a goal", () => {
     let state = gameReducer(initialGameState, { type: "START_LEVEL", levelId: 1 });
     state = gameReducer(state, { type: "SHOT_COMPLETE", result: makeResult() });
@@ -133,6 +204,18 @@ describe("game reducer", () => {
     expect(state.combo).toBe(1);
     expect(state.score).toBeGreaterThan(0);
     expect(state.phase).toBe("result");
+  });
+
+  it("uses the particle lifetime contract when ticking visual rewards", () => {
+    const stateWithParticle = {
+      ...initialGameState,
+      particles: [{ id: "spark-1", x: 0.5, y: 0.5, vx: 0, vy: 0, color: "#FFD700", size: 5, life: 1, maxLife: 1, type: "spark" as const }],
+    };
+    const ticked = gameReducer(stateWithParticle, { type: "TICK_PARTICLES" });
+    expect(ticked.particles[0]?.life).toBeCloseTo(0.95, 5);
+    let expired = ticked;
+    for (let i = 0; i < 19; i++) expired = gameReducer(expired, { type: "TICK_PARTICLES" });
+    expect(expired.particles).toHaveLength(0);
   });
 
   it("resets combo after a missed shot", () => {

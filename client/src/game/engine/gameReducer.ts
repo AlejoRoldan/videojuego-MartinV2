@@ -3,11 +3,35 @@
 // Central state machine for all game logic
 // =============================================================
 
-import type { GameState, GameAction, BallState, GoalkeeperState, Particle, FloatingText } from "./types";
+import type {
+  GameState,
+  GameAction,
+  BallState,
+  GoalkeeperState,
+  Particle,
+  FloatingText,
+  GameplayEvent,
+  ShotPerformance,
+  MathPower,
+} from "./types";
 import { getLevelById } from "../levels/levelData";
 import { generateChallenge, updateAdaptiveDifficulty } from "../math/mathEngine";
-import { MATH_POWER_META, selectMathPower } from "./mathPowers";
+import {
+  isPerfectStreakComplete,
+  MATH_POWER_META,
+  selectMathPower,
+  updatePerfectStreak,
+} from "./mathPowers";
 import { nanoid } from "nanoid";
+import {
+  advanceFlowCooldown,
+  applyFlowIntervention,
+  DEFAULT_RUNTIME_MODIFIERS,
+  emptyPerformanceWindow,
+  evaluatePerformanceWindow,
+  MAX_GAMEPLAY_EVENTS,
+  selectFlowIntervention,
+} from "./flowEngine";
 
 function createInitialBall(): BallState {
   return {
@@ -61,6 +85,36 @@ function createStarParticles(x: number, y: number): Particle[] {
   }));
 }
 
+function createPowerParticles(x: number, y: number, power: Exclude<MathPower, null>): Particle[] {
+  const colors: Record<Exclude<MathPower, null>, string> = {
+    precision: "#7BED9F",
+    curve: "#B388FF",
+    turbo: "#4DD0E1",
+    perfect: "#FFF3A3",
+  };
+  const count = power === "perfect" ? 18 : 12;
+  return Array.from({ length: count }, (_, i) => {
+    const angle = (i / count) * Math.PI * 2;
+    const speed = power === "turbo" ? 2.7 : power === "perfect" ? 2.2 : 1.8;
+    return {
+      id: nanoid(),
+      x,
+      y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      color: colors[power],
+      size: power === "perfect" ? 7 : 5,
+      life: 1,
+      maxLife: power === "perfect" ? 0.8 : 0.65,
+      type: "spark" as const,
+    };
+  });
+}
+
+export function appendGameplayEvents(current: GameplayEvent[], incoming: GameplayEvent[] = []): GameplayEvent[] {
+  return [...current, ...incoming].slice(-MAX_GAMEPLAY_EVENTS);
+}
+
 function createFloatingText(
   text: string,
   x: number,
@@ -100,6 +154,14 @@ export const initialGameState: GameState = {
   particles: [],
   floatingTexts: [],
   currentMathPower: null,
+  perfectStreak: 0,
+  mathPowerSequence: 0,
+  gameplayEvents: [],
+  performanceWindow: emptyPerformanceWindow(),
+  runtimeModifiers: { ...DEFAULT_RUNTIME_MODIFIERS },
+  lastMathResponseTimeMs: null,
+  pendingFlowIntervention: null,
+  sustainedMasteryWindows: 0,
 };
 
 export function gameReducer(state: GameState, action: GameAction): GameState {
@@ -117,7 +179,7 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
             number: Math.floor(Math.random() * 8) + 2,
           }))
         : [];
-      const challenge = generateChallenge(config);
+      const challenge = generateChallenge(config, 0);
       return {
         ...state,
         screen: "gameplay",
@@ -141,6 +203,14 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         particles: [],
         floatingTexts: [],
         currentMathPower: null,
+        perfectStreak: 0,
+        mathPowerSequence: 0,
+        gameplayEvents: state.gameplayEvents,
+        performanceWindow: emptyPerformanceWindow(),
+        runtimeModifiers: { ...DEFAULT_RUNTIME_MODIFIERS },
+        pendingFlowIntervention: null,
+        sustainedMasteryWindows: 0,
+        lastMathResponseTimeMs: null,
       };
     }
 
@@ -154,21 +224,36 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         adaptiveDifficulty: { ...state.adaptiveDifficulty, hintsEnabled: false },
         currentMathPower: null,
         lastMathCorrect: skipMath ? true : null,
+        lastMathResponseTimeMs: null,
       };
     }
 
     case "SUBMIT_MATH": {
       if (!state.currentChallenge || !state.levelConfig) return state;
       const correct = action.answer === state.currentChallenge.answer;
-      const newPower = correct ? 85 + Math.random() * 15 : 45 + Math.random() * 20;
+      const usedRetry = action.usedRetry ?? state.currentChallenge.retryGranted ?? false;
+      const responseTimeMs = action.responseTimeMs
+        ?? (action.timeLeft === undefined
+          ? null
+          : Math.max(0, (state.currentChallenge.timeLimit - action.timeLeft) * 1000));
+      const newPower = correct ? 85 : 45;
       const mathPower = correct
         ? selectMathPower(
             state.currentChallenge.type,
             action.timeLeft,
             state.currentChallenge.timeLimit,
-            action.usedRetry ?? state.currentChallenge.retryGranted ?? false
+            usedRetry
           )
         : null;
+      const nextPerfectStreak = updatePerfectStreak(
+        state.perfectStreak,
+        correct,
+        action.timeLeft,
+        state.currentChallenge.timeLimit,
+        usedRetry,
+      );
+      const completedPerfectStreak = isPerfectStreakComplete(nextPerfectStreak)
+        && state.perfectStreak < nextPerfectStreak;
 
       const newErrors = [...state.adaptiveDifficulty.recentErrors, correct ? 0 : 1];
       const adaptive = updateAdaptiveDifficulty(
@@ -183,6 +268,9 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         : correct
           ? [createFloatingText("¡CORRECTO! +PODER", 0.5, 0.5, "#7BED9F", "lg")]
           : [createFloatingText("Respuesta incorrecta", 0.5, 0.5, "#FF4757", "md")];
+      if (completedPerfectStreak) {
+        floatingTexts.push(createFloatingText("¡RACHA PERFECTA! 5 ACERTADOS", 0.5, 0.38, "#FFD700", "xl"));
+      }
 
       return {
         ...state,
@@ -197,7 +285,11 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         },
         floatingTexts: [...state.floatingTexts, ...floatingTexts],
         currentMathPower: mathPower,
+        perfectStreak: nextPerfectStreak,
+        mathPowerSequence: state.mathPowerSequence + (correct ? 1 : 0),
         lastMathCorrect: correct,
+        lastMathResponseTimeMs: responseTimeMs,
+        gameplayEvents: appendGameplayEvents(state.gameplayEvents, action.event ? [action.event] : []),
       };
     }
 
@@ -238,7 +330,17 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
     case "SHOOT":
       if (!state.targetCoord || !state.levelConfig) return state;
       if (state.phase !== "aiming" && state.phase !== "shooting") return state;
-      return { ...state, ball: { ...state.ball, inFlight: true }, phase: "shooting" };
+      return {
+        ...state,
+        ball: {
+          ...state.ball,
+          inFlight: true,
+          position: action.resolution?.trajectoryPoints[0] ?? state.ball.position,
+          trail: action.resolution?.trajectoryPoints ?? state.ball.trail,
+        },
+        lastShotResult: action.resolution ?? state.lastShotResult,
+        phase: "shooting",
+      };
 
     case "SHOT_COMPLETE": {
       const result = action.result;
@@ -267,7 +369,37 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         newFloatingTexts = [createFloatingText("¡Afuera!", 0.5, 0.3, "#FF4757", "md")];
       }
       if (result.mathCorrect && result.scored) newParticles = [...newParticles, ...createStarParticles(0.5, 0.5)];
-      const newChallenge = state.levelConfig ? generateChallenge(state.levelConfig) : null;
+      if (result.input.mathPower) newParticles = [...newParticles, ...createPowerParticles(0.5, 0.4, result.input.mathPower)];
+      if (result.mathCorrect && !result.scored) {
+        newFloatingTexts.push(createFloatingText("¡Buen cálculo! El poder contó aunque el tiro fue detenido.", 0.5, 0.52, "#D8FFD8", "md"));
+      }
+      const shotPerformance: ShotPerformance = {
+        domain: state.currentChallenge?.type ?? "multiplication",
+        mathCorrect: result.mathCorrect,
+        responseTimeMs: state.lastMathResponseTimeMs,
+        assistanceStage: state.currentChallenge?.assistanceStage === "calm" || !state.currentChallenge?.assistanceStage
+          ? "none"
+          : state.currentChallenge.assistanceStage,
+        usedRetry: state.currentChallenge?.retryGranted ?? false,
+        outcome: result.outcome,
+        scored: result.scored,
+        difficulty: state.levelConfig?.mathDifficulty ?? "easy",
+      };
+      const performanceWindow = evaluatePerformanceWindow([
+        ...state.performanceWindow.shots,
+        shotPerformance,
+      ]);
+      const nextSustainedMasteryWindows = performanceWindow.shots.length === 5
+        && (performanceWindow.mathSuccessRate ?? 0) > 0.9
+        && (performanceWindow.noHelpSuccessRate ?? 0) >= 0.7
+        ? state.sustainedMasteryWindows + 1
+        : performanceWindow.shots.length === 5 ? 0 : state.sustainedMasteryWindows;
+      const pendingFlowIntervention = selectFlowIntervention(
+        performanceWindow,
+        state.runtimeModifiers,
+        nextSustainedMasteryWindows,
+      );
+      const newChallenge = state.levelConfig ? generateChallenge(state.levelConfig, newShotsTaken) : null;
       return {
         ...state,
         shotsScored: newShotsScored,
@@ -281,12 +413,18 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         currentChallenge: newChallenge,
         particles: [...state.particles, ...newParticles],
         floatingTexts: [...state.floatingTexts, ...newFloatingTexts],
+        gameplayEvents: appendGameplayEvents(state.gameplayEvents, action.events),
+        performanceWindow,
+        pendingFlowIntervention,
+        sustainedMasteryWindows: nextSustainedMasteryWindows,
       };
     }
 
     case "NEXT_SHOT": {
       if (!state.levelConfig) return state;
       const { shotsScored, shotsTaken, levelConfig } = state;
+      const cooledRuntime = advanceFlowCooldown(state.runtimeModifiers);
+      const nextRuntime = applyFlowIntervention(cooledRuntime, state.pendingFlowIntervention);
       const shotsLeft = levelConfig.shotsAllowed - shotsTaken;
       if (shotsScored >= levelConfig.shotsRequired) return { ...state, screen: "victory" };
       if (shotsLeft <= 0) return { ...state, screen: "defeat" };
@@ -300,6 +438,12 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         adaptiveDifficulty: { ...state.adaptiveDifficulty, hintsEnabled: false },
         floatingTexts: [],
         currentMathPower: null,
+        perfectStreak: state.perfectStreak,
+        mathPowerSequence: state.mathPowerSequence,
+        runtimeModifiers: nextRuntime,
+        pendingFlowIntervention: null,
+        lastMathResponseTimeMs: null,
+        gameplayEvents: appendGameplayEvents(state.gameplayEvents, action.flowEvent ? [action.flowEvent] : []),
       };
     }
 
@@ -310,7 +454,8 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
     case "ADD_FLOATING_TEXT": return { ...state, floatingTexts: [...state.floatingTexts, action.text] };
 
     case "TICK_PARTICLES": {
-      const dt = 0.016;
+      // The reducer ticks every 50 ms; keeping dt aligned makes visual rewards short and predictable.
+      const dt = 0.05;
       const updatedParticles = state.particles
         .map((p) => ({ ...p, x: p.x + p.vx * dt, y: p.y + p.vy * dt, vy: p.vy + 2 * dt, life: p.life - dt / p.maxLife }))
         .filter((p) => p.life > 0);

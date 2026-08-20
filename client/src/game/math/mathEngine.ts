@@ -5,6 +5,7 @@
 
 import type { MathChallenge, LevelConfig, Vec2 } from "../engine/types";
 import { getConfiguredTimeLimit } from "../engine/gamePace";
+import { coordToGoalPoint, goalPointToCoord } from "../engine/coordinates";
 
 function randomInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -19,40 +20,43 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-function generateOptions(answer: number, count = 4): number[] {
+function generateOptions(answer: number, count = 4, minimum = 0): number[] {
   const opts = new Set<number>([answer]);
   const deltas = [1, 2, 3, 5, 7, 10, -1, -2, -3, -5];
   let attempts = 0;
-  while (opts.size < count && attempts < 50) {
+  while (opts.size < count && attempts < 80) {
     const delta = deltas[Math.floor(Math.random() * deltas.length)];
     const candidate = answer + delta;
-    if (candidate > 0) opts.add(candidate);
+    if (candidate >= minimum) opts.add(candidate);
     attempts++;
   }
+  let offset = 1;
   while (opts.size < count) {
-    opts.add(answer + opts.size * 3);
+    const candidate = answer + offset * (answer < minimum ? 1 : 3);
+    if (candidate >= minimum) opts.add(candidate);
+    offset++;
   }
   return shuffle(Array.from(opts)).slice(0, count);
 }
 
-function multiplicationChallenge(difficulty: "easy" | "medium" | "hard"): MathChallenge {
-  let a: number, b: number;
-  if (difficulty === "easy") {
-    a = randomInt(2, 5);
-    b = randomInt(2, 5);
-  } else if (difficulty === "medium") {
-    a = randomInt(2, 7);
-    b = randomInt(2, 7);
-  } else {
-    a = randomInt(6, 9);
-    b = randomInt(6, 9);
-  }
+function multiplicationChallenge(
+  difficulty: "easy" | "medium" | "hard",
+  tableRange?: { min: number; max: number },
+): MathChallenge {
+  const fallbackRange = difficulty === "easy"
+    ? { min: 2, max: 5 }
+    : difficulty === "medium"
+    ? { min: 2, max: 7 }
+    : { min: 6, max: 9 };
+  const range = tableRange ?? fallbackRange;
+  const a = randomInt(range.min, range.max);
+  const b = randomInt(range.min, range.max);
   const answer = a * b;
   return {
     type: "multiplication",
     question: `${a} × ${b} = ?`,
     answer,
-    options: generateOptions(answer),
+    options: generateOptions(answer, 4, 0),
     timeLimit: difficulty === "easy" ? 15 : difficulty === "medium" ? 10 : 8,
     hint: `${a} grupos de ${b}`,
   };
@@ -69,8 +73,7 @@ function coordinateChallenge(
   } else {
     x = randomInt(-3, 3);
     y = randomInt(-3, 3);
-    if (x === 0) x = 1;
-    if (y === 0) y = 1;
+    // Zero is a valid axis coordinate; only the quadrant question excludes it below.
   }
 
   const templates = [
@@ -82,16 +85,17 @@ function coordinateChallenge(
     {
       q: `Si el balón va a (${x}, ${y}), ¿cuál es su coordenada X?`,
       a: x,
-      opts: generateOptions(x),
+        opts: generateOptions(x, 4, -3),
     },
     {
       q: `Si el balón va a (${x}, ${y}), ¿cuál es su coordenada Y?`,
       a: y,
-      opts: generateOptions(y),
+        opts: generateOptions(y, 4, -3),
     },
   ];
 
-  const t = templates[randomInt(0, templates.length - 1)];
+  const validTemplates = x === 0 || y === 0 ? templates.slice(1) : templates;
+  const t = validTemplates[randomInt(0, validTemplates.length - 1)];
   return {
     type: "coordinate",
     question: t.q,
@@ -163,42 +167,44 @@ function velocityChallenge(difficulty: "easy" | "medium" | "hard"): MathChalleng
   };
 }
 
-export function generateChallenge(level: LevelConfig): MathChallenge {
+export function generateChallenge(level: LevelConfig, challengeIndex = 0): MathChallenge {
   const { concept, mathDifficulty, gridQuadrants } = level;
+  const configuredType = level.challengeTypes?.length
+    ? level.challengeTypes[challengeIndex % level.challengeTypes.length]
+    : undefined;
+  const challengeType = configuredType ?? (
+    concept === "multiplication" || concept === "tactics" ? "multiplication"
+      : concept === "coordinates" || concept === "cartesian" || concept === "directions" ? "coordinate"
+      : concept === "angles" || concept === "trajectories" ? "angle"
+      : "velocity"
+  );
   let challenge: MathChallenge;
 
-  switch (concept) {
+  switch (challengeType) {
     case "multiplication":
-    case "tactics":
-      challenge = multiplicationChallenge(mathDifficulty);
+      challenge = multiplicationChallenge(mathDifficulty, level.tableRange);
       break;
-    case "coordinates":
-    case "cartesian":
-      challenge = coordinateChallenge(mathDifficulty, gridQuadrants);
+    case "coordinate":
+      challenge = concept === "directions"
+        ? {
+            type: "coordinate",
+            question: "¿A qué lado de la portería quieres apuntar?",
+            answer: 1,
+            options: [1, 2, 3, 4],
+            timeLimit: 20,
+            hint: "Haz clic en la portería donde quieres que entre el balón",
+          }
+        : coordinateChallenge(mathDifficulty, gridQuadrants);
       break;
-    case "angles":
+    case "angle":
       challenge = angleChallenge(mathDifficulty);
       break;
     case "velocity":
       challenge = velocityChallenge(mathDifficulty);
       break;
-    case "directions":
-      challenge = {
-        type: "coordinate",
-        question: "¿A qué lado de la portería quieres apuntar?",
-        answer: 1,
-        options: [1, 2, 3, 4],
-        timeLimit: 20,
-        hint: "Haz clic en la portería donde quieres que entre el balón",
-      };
-      break;
-    case "trajectories":
-      challenge = Math.random() > 0.5
-        ? multiplicationChallenge(mathDifficulty)
-        : angleChallenge(mathDifficulty);
-      break;
     default:
-      challenge = multiplicationChallenge(mathDifficulty);
+      challenge = multiplicationChallenge(mathDifficulty, level.tableRange);
+      break;
   }
 
   return {
@@ -243,16 +249,10 @@ export function updateAdaptiveDifficulty(
   };
 }
 
-export function coordToGoalPosition(coord: Vec2, gridMax: Vec2): Vec2 {
-  return {
-    x: (coord.x + gridMax.x) / (gridMax.x * 2),
-    y: (coord.y + gridMax.y) / (gridMax.y * 2),
-  };
+export function coordToGoalPosition(coord: Vec2, _gridMax: Vec2): Vec2 {
+  return coordToGoalPoint(coord, 4);
 }
 
-export function goalPositionToCoord(pos: Vec2, gridMax: Vec2): Vec2 {
-  return {
-    x: Math.round(pos.x * gridMax.x * 2 - gridMax.x),
-    y: Math.round(pos.y * gridMax.y * 2 - gridMax.y),
-  };
+export function goalPositionToCoord(pos: Vec2, _gridMax: Vec2): Vec2 {
+  return goalPointToCoord(pos, 4);
 }

@@ -24,6 +24,7 @@ interface AutoShootOptions {
   dispatch: (action: GameAction) => void;
   isInFlight: () => boolean;
   markInFlight: () => void;
+  onShoot?: () => void;
   delayMs?: number;
 }
 
@@ -32,11 +33,15 @@ export function scheduleAutoShoot({
   dispatch,
   isInFlight,
   markInFlight,
+  onShoot,
   delayMs = AUTO_SHOOT_DELAY_MS,
 }: AutoShootOptions): ReturnType<typeof setTimeout> {
   return setTimeout(() => {
     if (isInFlight()) return;
-    markInFlight();
-    dispatch({ type: "SHOOT" });
+    if (onShoot) onShoot();
+    else {
+      markInFlight();
+      dispatch({ type: "SHOOT" });
+    }
   }, delayMs);
 }

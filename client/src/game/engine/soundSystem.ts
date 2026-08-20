@@ -4,6 +4,8 @@
 // FIX: Global user-gesture listener ensures audio works on mobile
 // =============================================================
 
+import type { MathPower } from "./types";
+
 let audioCtx: AudioContext | null = null;
 let audioUnlocked = false;
 
@@ -114,9 +116,16 @@ export const sounds = {
     playTone(440, "sine", 0.08, 0.15);
   },
 
-  /** Ball kick — whoosh + impact */
+  /** Ball launch whoosh — a short rising sports-broadcast sweep. */
+  whoosh() {
+    playNoise(0.18, 0.11);
+    playTone(180, "sine", 0.2, 0.14, 0, 920);
+    playTone(110, "triangle", 0.16, 0.1, 0.025, 520);
+  },
+
+  /** Ball kick impact, kept separate so launch and contact have distinct cues. */
   kick() {
-    playNoise(0.15, 0.25);
+    playNoise(0.12, 0.2);
     playTone(80, "sine", 0.12, 0.4, 0.05, 40);
     playTone(120, "triangle", 0.1, 0.3, 0.05, 60);
   },
@@ -155,9 +164,45 @@ export const sounds = {
     playTone(200, "sawtooth", 0.15, 0.3, 0, 100);
   },
 
+  /** Distinctive reward cue for the selected Math Power. */
+  power(power: Exclude<MathPower, null>) {
+    const cues: Record<Exclude<MathPower, null>, { notes: number[]; type: OscillatorType }> = {
+      precision: { notes: [659, 880], type: "sine" },
+      curve: { notes: [440, 554, 659], type: "triangle" },
+      turbo: { notes: [330, 660, 990], type: "square" },
+      perfect: { notes: [523, 784, 1047, 1319], type: "sine" },
+    };
+    cues[power].notes.forEach((note, index) => playTone(note, cues[power].type, 0.12, 0.22, index * 0.07));
+  },
+
+  /** Five fast correct answers in a row. */
+  perfectStreak() {
+    [784, 988, 1175, 1568].forEach((note, index) => playTone(note, "sine", 0.16, 0.25, index * 0.09));
+  },
+
+  /** Ball hitting the defensive wall. */
+  wall() {
+    playNoise(0.16, 0.22);
+    playTone(180, "square", 0.12, 0.25, 0, 90);
+  },
+
   /** Button click */
   click() {
     playTone(600, "sine", 0.06, 0.1);
+  },
+
+  /** Short coin-and-star reward cue for a completed session mission. */
+  coinEarned() {
+    playTone(880, "triangle", 0.11, 0.2);
+    playTone(1175, "sine", 0.16, 0.18, 0.08);
+  },
+
+  /** Larger but still brief fanfare for completing the three-goal mission. */
+  missionComplete() {
+    [523, 659, 784, 1047].forEach((freq, index) => {
+      playTone(freq, "sine", 0.16, 0.2, index * 0.09);
+    });
+    playTone(1319, "triangle", 0.28, 0.24, 0.38);
   },
 
   /** Level complete */
