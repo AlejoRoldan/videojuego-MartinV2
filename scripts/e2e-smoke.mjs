@@ -118,9 +118,16 @@ try {
     if (result.exceptionDetails) throw new Error(result.exceptionDetails.text);
     return result.result.value;
   };
+  const pressEnter = async () => {
+    const key = { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 };
+    await cdp.send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...key });
+    await cdp.send("Input.dispatchKeyEvent", { type: "char", ...key, text: "\r", unmodifiedText: "\r" });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...key });
+  };
   await cdp.send("Page.enable");
   await cdp.send("Runtime.enable");
   await cdp.send("Performance.enable");
+  await cdp.send("Page.bringToFront");
   await cdp.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await cdp.send("Page.navigate", { url: APP_URL });
   await waitFor(async () => (await evaluate("document.readyState")) === "complete", "Game did not load");
@@ -128,8 +135,7 @@ try {
   const homeText = await evaluate("document.body.innerText");
   assert(homeText.includes("TIRO LIBRE") && homeText.includes("JUGAR"), "Home screen is not playable.");
   await evaluate(`[...document.querySelectorAll("button")].find((el) => el.textContent.includes("JUGAR")).focus()`);
-  await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
-  await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+  await pressEnter();
   await waitFor(async () => (await evaluate("document.body.innerText")).includes("Seleccionar Nivel"), "Level selector did not open");
 
   const accessibilityIssues = await evaluate(`(() => {
@@ -154,8 +160,7 @@ try {
   await evaluate(`document.querySelector('[aria-label^="Apuntar a coordenada"]').click()`);
   await waitFor(async () => /¡GOL!|¡Atajada!|¡Bloqueado!|¡Afuera!/.test(await evaluate("document.body.innerText")), "A complete shot did not reach its result", 8_000);
   await evaluate(`document.querySelector('[aria-label="Continuar al siguiente tiro"]').focus()`);
-  await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
-  await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+  await pressEnter();
   await waitFor(async () => (await evaluate(`document.querySelectorAll('[aria-label^="Apuntar a coordenada"]:not([disabled])').length`)) > 0, "Keyboard could not continue to the next shot");
 
   const navigation = await evaluate(`(() => {
