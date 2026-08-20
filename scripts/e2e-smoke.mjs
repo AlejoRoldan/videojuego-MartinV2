@@ -97,11 +97,11 @@ try {
   const debugPort = await waitFor(() => {
     if (!existsSync(activePortFile)) {
       if (chrome.exitCode !== null) throw new Error(`Chrome exited with ${chrome.exitCode}: ${chromeStderr.slice(-1000)}`);
-      return false;
+      throw new Error(`Chrome is still starting${chromeStderr ? `: ${chromeStderr.slice(-1000)}` : ""}`);
     }
     const [port] = readFileSync(activePortFile, "utf8").trim().split(/\r?\n/);
     return Number(port) || false;
-  }, "Chrome did not publish its DevTools port");
+  }, "Chrome did not publish its DevTools port", 30_000);
   const target = await waitFor(async () => {
     const response = await fetch(`http://127.0.0.1:${debugPort}/json/list`);
     const pages = await response.json();
