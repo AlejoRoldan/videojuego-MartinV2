@@ -91,7 +91,10 @@ try {
     "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage",
     "--no-first-run", "--disable-background-networking", "--remote-debugging-address=127.0.0.1",
     "--remote-debugging-port=0", `--user-data-dir=${profileDir}`, "data:blank",
-  ], { stdio: ["ignore", "ignore", "pipe"] });
+  ], {
+    stdio: ["ignore", "ignore", "pipe"],
+    env: { ...process.env, DBUS_SESSION_BUS_ADDRESS: "disabled:" },
+  });
   chrome.stderr.on("data", (chunk) => { chromeStderr += chunk.toString(); });
   const activePortFile = path.join(profileDir, "DevToolsActivePort");
   const debugPort = await waitFor(() => {
