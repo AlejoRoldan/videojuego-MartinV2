@@ -22,6 +22,22 @@ async function waitFor(check, message, timeoutMs = 15_000) {
   throw new Error(`${message}${lastError ? `: ${lastError.message}` : ""}`);
 }
 
+async function stopProcess(child, timeoutMs = 2_000) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+
+  const waitForExit = () => new Promise((resolve) => child.once("exit", resolve));
+  const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+  const gracefulExit = waitForExit();
+  child.kill("SIGTERM");
+  await Promise.race([gracefulExit, delay(timeoutMs)]);
+
+  if (child.exitCode === null && child.signalCode === null) {
+    const forcedExit = waitForExit();
+    child.kill("SIGKILL");
+    await Promise.race([forcedExit, delay(1_000)]);
+  }
+}
+
 function findChrome() {
   for (const candidate of ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"]) {
     const result = spawnSync("which", [candidate], { encoding: "utf8" });
@@ -152,7 +168,7 @@ try {
   console.log(JSON.stringify({ status: "passed", viewport: "390x844", navigation, jsHeapUsed, accessibilityIssues, mobileLayout }, null, 2));
 } finally {
   cdp?.close();
-  chrome?.kill("SIGTERM");
-  server.kill("SIGTERM");
-  rmSync(profileDir, { recursive: true, force: true });
+  await stopProcess(chrome);
+  await stopProcess(server);
+  rmSync(profileDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }
