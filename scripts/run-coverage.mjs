@@ -21,7 +21,7 @@ mkdirSync(rawDir, { recursive: true });
 
 const run = spawnSync("pnpm", ["exec", "vitest", "run"], {
   cwd: root,
-  env: { ...process.env, NODE_V8_COVERAGE: rawDir },
+  env: { ...process.env, CORE_V8_COVERAGE_DIR: rawDir },
   stdio: "inherit",
 });
 if (run.status !== 0) process.exit(run.status ?? 1);

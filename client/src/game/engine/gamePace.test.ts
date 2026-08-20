@@ -1,3 +1,4 @@
+import "../test/coverageSetup";
 import { describe, expect, it } from "vitest";
 import {
   adjustTimeLimit,
