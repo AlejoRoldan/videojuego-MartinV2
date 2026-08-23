@@ -174,6 +174,8 @@ try {
   })()`);
   assert(Number.isFinite(correctOption), "Could not parse the multiplication challenge in the smoke test.");
   await evaluate(`document.querySelector('[aria-label="Responder ${correctOption}"]').click()`);
+  await waitFor(async () => (await evaluate(`document.querySelectorAll('[aria-label^="Disparar a la coordenada"]').length`)) > 0 || /¡GOL!|¡Atajada!|¡Bloqueado!|¡Afuera!/.test(await evaluate("document.body.innerText")), "Shot control did not become available", 8_000);
+  await evaluate(`document.querySelector('[aria-label^="Disparar a la coordenada"]')?.click()`);
   await waitFor(async () => /¡GOL!|¡Atajada!|¡Bloqueado!|¡Afuera!/.test(await evaluate("document.body.innerText")), "A complete shot did not reach its result", 8_000);
   const mathPowerFeedback = await evaluate(`/PRECISIÓN|CURVA|TURBO|PERFECTO/.test(document.body.innerText)`);
   assert(mathPowerFeedback, "Math Power feedback was not visible after a correct math answer.");

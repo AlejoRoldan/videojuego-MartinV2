@@ -21,6 +21,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { ArrowLeft, Zap } from "lucide-react";
 import type { FloatingText, MathPower, Particle, ShotReasonCode, Vec2 } from "../engine/types";
 import { createKeeperSnapshot } from "../engine/physics";
+import { coordToGoalPoint } from "../engine/coordinates";
 import { sounds } from "../engine/soundSystem";
 import { MATH_POWER_META, PERFECT_STREAK_TARGET } from "../engine/mathPowers";
 import { getResultTransitionMs, getShotAnimationDuration, loadGamePace } from "../engine/gamePace";
@@ -37,6 +38,16 @@ const POWER_VISUALS: Record<Exclude<MathPower, null>, { accent: string; glow: st
   perfect: { accent: "#FFD700", glow: "rgba(255,215,0,.9)", trail: "#FFF3A3" },
 };
 
+function getSpinLabel(spin: number): string {
+  if (Math.abs(spin) < 0.05) return "Sin efecto";
+  return spin < 0 ? "Curva izquierda" : "Curva derecha";
+}
+
+function getPowerLabel(power: MathPower): string {
+  if (!power) return "Potencia normal";
+  return MATH_POWER_META[power].shortLabel;
+}
+
 function getReasonLabel(reasonCode: ShotReasonCode): string {
   switch (reasonCode) {
     case "clean_target": return "El balón siguió la celda elegida.";
@@ -49,10 +60,10 @@ function getReasonLabel(reasonCode: ShotReasonCode): string {
 }
 
 export default function GameplayScreen() {
-  const { state, goToScreen, setTarget, submitMath, nextShot, shoot, updateKeeperSnapshot, playerProfile } = useGame();
+  const { state, goToScreen, setTarget, setSpin, submitMath, nextShot, shoot, updateKeeperSnapshot, playerProfile } = useGame();
   const {
     levelConfig, phase, currentChallenge, shotsScored, shotsTaken,
-    score, combo, targetCoord, lastShotResult, ball, adaptiveDifficulty,
+    score, combo, targetCoord, lastShotResult, ball, wall, adaptiveDifficulty,
     currentMathPower, perfectStreak, mathPowerSequence,
     runtimeModifiers, pendingFlowIntervention,
   } = state;
@@ -98,6 +109,9 @@ export default function GameplayScreen() {
   const isDirections = levelConfig.concept === "directions";
   const cols = gridMax - gridMin + 1;
   const rows = gridMax - gridMin + 1;
+  const previewTargetPoint = targetCoord ? coordToGoalPoint(targetCoord, levelConfig.gridQuadrants) : null;
+  const spinLabel = getSpinLabel(ball.spin);
+  const powerLabel = getPowerLabel(currentMathPower);
 
   const progressPct = Math.min(100, (shotsScored / levelConfig.shotsRequired) * 100);
   const evaluatedKeeperX = lastShotResult?.input.keeper.position.x;
@@ -570,6 +584,59 @@ export default function GameplayScreen() {
             <div className="shot-flash" aria-hidden="true" />
           )}
 
+          {/* Arcade preview: the line is an intention guide, not a second physics result. */}
+          {phase === "aiming" && previewTargetPoint && (
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 100 100"
+              preserveAspectRatio="none"
+              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", zIndex: 2, pointerEvents: "none", opacity: 0.78 }}
+            >
+              <path
+                d={`M 50 92 Q ${50 + ball.spin * 22} 43 ${previewTargetPoint.x * 100} ${previewTargetPoint.y * 100}`}
+                fill="none"
+                stroke={Math.abs(ball.spin) > 0.05 ? "#B388FF" : "rgba(255,255,255,0.72)"}
+                strokeWidth="0.8"
+                strokeDasharray="2.2 2.4"
+                strokeLinecap="round"
+              />
+            </svg>
+          )}
+
+          {/* Barrier: rendered from the same wall positions used by deterministic physics. */}
+          {levelConfig.hasWall && wall.length > 0 && (
+            <div aria-hidden="true" data-free-kick-wall="true" style={{ position: "absolute", inset: 0, zIndex: 3, pointerEvents: "none" }}>
+              {wall.map((player) => (
+                <div
+                  key={player.id}
+                  data-wall-player={player.id}
+                  style={{
+                    position: "absolute",
+                    left: `${player.position.x * 100}%`,
+                    top: `${player.position.y * 100}%`,
+                    transform: "translate(-50%, -50%)",
+                    width: 28,
+                    height: 42,
+                    display: "flex",
+                    alignItems: "flex-end",
+                    justifyContent: "center",
+                    paddingBottom: 3,
+                    borderRadius: "14px 14px 8px 8px",
+                    background: "linear-gradient(180deg, #7B8FF7 0%, #3742FA 70%, #20277E 100%)",
+                    border: "2px solid rgba(255,255,255,0.78)",
+                    boxShadow: "0 4px 12px rgba(0,0,0,0.45)",
+                    color: "white",
+                    fontSize: 10,
+                    fontWeight: 900,
+                    textShadow: "0 1px 2px rgba(0,0,0,0.8)",
+                  }}
+                >
+                  {player.number}
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Transparent target zones — the grid is only semantic, never a visible mesh. */}
           <div
             style={{
@@ -1004,7 +1071,7 @@ export default function GameplayScreen() {
                 boxShadow: "0 0 20px rgba(55,66,250,0.4)",
               }}
             >
-              <div>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ color: "#7B8FF7", fontSize: 11, fontWeight: 700 }}>Apuntando a</div>
                 <div style={{
                   fontFamily: "'Fredoka One', cursive",
@@ -1013,6 +1080,21 @@ export default function GameplayScreen() {
                 }}>
                   ({targetCoord.x}, {targetCoord.y})
                 </div>
+                <label style={{ display: "block", marginTop: 6, color: "#D9DFFF", fontSize: 11, fontWeight: 800 }}>
+                  {spinLabel} · {powerLabel}
+                  <input
+                    data-spin-control="true"
+                    type="range"
+                    min="-1"
+                    max="1"
+                    step="0.1"
+                    value={ball.spin}
+                    onChange={(event) => setSpin(Number(event.target.value))}
+                    aria-label="Ajustar efecto del tiro"
+                    aria-valuetext={spinLabel}
+                    style={{ display: "block", width: "100%", minWidth: 110, height: 28, accentColor: "#B388FF", touchAction: "manipulation" }}
+                  />
+                </label>
               </div>
               <motion.button
                 whileTap={{ scale: 0.92 }}

@@ -35,6 +35,7 @@ interface GameContextValue {
   goToScreen: (screen: GameState["screen"]) => void;
   startLevel: (levelId: number) => void;
   setTarget: (coord: Vec2) => void;
+  setSpin: (spin: number) => void;
   submitMath: (answer: number, timeLeft?: number, usedRetry?: boolean) => void;
   shoot: (keeperSnapshot?: KeeperSnapshot) => void;
   updateKeeperSnapshot: (snapshot: KeeperSnapshot) => void;
@@ -125,6 +126,10 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     dispatch({ type: "SHOOT", resolution: result });
   }, []);
 
+  const setSpin = useCallback((spin: number) => {
+    dispatch({ type: "SET_SPIN", spin });
+  }, []);
+
   const setTarget = useCallback((coord: Vec2) => {
     dispatch({ type: "SET_TARGET", coord });
     const s = stateRef.current;
@@ -185,13 +190,20 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     mathStartedAtRef.current = null;
     dispatch({ type: "SUBMIT_MATH", answer, timeLeft: effectiveTimeLeft, responseTimeMs, usedRetry: usedRetry ?? s.currentChallenge?.retryGranted ?? false, event: mathEvent });
     if (mathSubmitTimerRef.current) clearTimeout(mathSubmitTimerRef.current);
-    mathSubmitTimerRef.current = scheduleAutoShoot({
-      dispatch,
-      isInFlight: () => inFlightRef.current,
-      markInFlight: () => { inFlightRef.current = true; },
-      onShoot: resolveCurrentShot,
-      delayMs: getAutoShootDelayMs(loadGamePace()),
-    });
+    mathSubmitTimerRef.current = null;
+
+    // Arcade levels return to aiming after the math boost so the player can
+    // choose spin and commit the shot manually. Direction levels keep their
+    // compact auto-shot flow because the target itself is the answer.
+    if (s.levelConfig?.concept === "directions") {
+      mathSubmitTimerRef.current = scheduleAutoShoot({
+        dispatch,
+        isInFlight: () => inFlightRef.current,
+        markInFlight: () => { inFlightRef.current = true; },
+        onShoot: resolveCurrentShot,
+        delayMs: getAutoShootDelayMs(loadGamePace()),
+      });
+    }
   }, [clearAssistanceTimers, resolveCurrentShot]);
 
   useEffect(() => {
@@ -357,7 +369,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     dispatch({ type: "RESET_GAME" });
   }, [clearAssistanceTimers]);
 
-  return <GameContext.Provider value={{ state, dispatch, goToScreen, startLevel, setTarget, submitMath, shoot, updateKeeperSnapshot, nextShot, resetGame, playerProfile, updateProfile }}>{children}</GameContext.Provider>;
+  return <GameContext.Provider value={{ state, dispatch, goToScreen, startLevel, setTarget, setSpin, submitMath, shoot, updateKeeperSnapshot, nextShot, resetGame, playerProfile, updateProfile }}>{children}</GameContext.Provider>;
 }
 
 export function useGame() {

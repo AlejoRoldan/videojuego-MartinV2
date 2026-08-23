@@ -54,6 +54,16 @@ describe("game reducer", () => {
     expect(state).toBe(initialGameState);
   });
 
+  it("normalizes arcade spin without changing the selected target", () => {
+    let state = gameReducer(initialGameState, { type: "START_LEVEL", levelId: 3 });
+    state = gameReducer(state, { type: "SET_TARGET", coord: { x: 3, y: 2 } });
+    state = gameReducer(state, { type: "SET_SPIN", spin: 1.8 });
+    expect(state.ball.spin).toBe(1);
+    expect(state.targetCoord).toEqual({ x: 3, y: 2 });
+    state = gameReducer(state, { type: "SET_SPIN", spin: -0.75 });
+    expect(state.ball.spin).toBe(-0.75);
+  });
+
   it("moves non-direction levels into math phase after target selection", () => {
     let state = gameReducer(initialGameState, { type: "START_LEVEL", levelId: 3 });
     state = gameReducer(state, { type: "SET_TARGET", coord: { x: 1, y: 1 } });

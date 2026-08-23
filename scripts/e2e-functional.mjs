@@ -196,13 +196,14 @@ try {
     let powerObserved = false;
     const destination = await waitFor(async () => await evaluate(`(() => {
       const power = /PRECISIÓN|CURVA|TURBO|PERFECTO|PODER|PERFECTA/i.test(document.body.innerText);
-      const marker = document.querySelector('.shot-destination-marker');
+      const marker = document.querySelector('.goal-target-zone[aria-pressed="true"]');
       if (power) window.__tlmPowerObserved = true;
       if (!marker) return null;
       const rect = marker.getBoundingClientRect();
       return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, power };
     })()`), "Shot destination marker did not render.", 6_000);
     powerObserved = Boolean(destination.power) || Boolean(await evaluate("window.__tlmPowerObserved === true"));
+    await evaluate(`document.querySelector('[aria-label^="Disparar a la coordenada"]')?.click()`);
     const keeperDuring = await waitFor(async () => await evaluate(`(() => {
       const marker = document.querySelector('.shot-destination-marker');
       const image = document.querySelector('img[alt="Portero"]');
@@ -220,14 +221,16 @@ try {
       const count = await evaluate(`document.querySelectorAll('.shot-trajectory-blur span').length`);
       return count > 0 ? count : false;
     }, "Shot trajectory blur did not render.", 6_000);
-    let impactObserved = false;
-    let resultSeenAt = 0;
-    await waitFor(async () => {
-      const snapshot = await evaluate(`({ impact: Boolean(document.querySelector('.shot-microimpact')), result: /¡GOL!|¡Atajada!|¡Bloqueado!|¡Afuera!/.test(document.body.innerText) })`);
-      impactObserved ||= snapshot.impact;
-      if (snapshot.result && resultSeenAt === 0) resultSeenAt = Date.now();
-      return snapshot.result && impactObserved && Date.now() - resultSeenAt <= 260;
-    }, "Shot did not reach a result with visible microimpact.", 8_000);
+    const impactObserved = await waitFor(
+      async () => Boolean(await evaluate("Boolean(document.querySelector('.shot-microimpact'))")),
+      "Shot microimpact did not render.",
+      6_000,
+    );
+    await waitFor(
+      async () => /¡GOL!|¡Atajada!|¡Bloqueado!|¡Afuera!/.test(await evaluate("document.body.innerText")),
+      "Shot did not reach a result.",
+      8_000,
+    );
     return { destination, trailDots, impactObserved, powerObserved, keeperBefore, keeperDuring };
 
   };

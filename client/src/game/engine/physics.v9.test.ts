@@ -201,6 +201,16 @@ describe("V9 shot fairness and determinism", () => {
     }
   });
 
+  it("PHY-11 persists selected spin and bends the trajectory deterministically", () => {
+    const neutral = resolveShot(makeInput({ spin: 0, targetCoord: { x: 3, y: 2 } }));
+    const curved = resolveShot(makeInput({ spin: 0.8, targetCoord: { x: 3, y: 2 } }));
+
+    expect(curved.input.spin).toBe(0.8);
+    expect(curved.spinUsed).toBe(0.8);
+    expect(curved.trajectoryPoints.at(30)?.x).toBeGreaterThan(neutral.trajectoryPoints.at(30)?.x ?? 0);
+    expect(resolveShot(makeInput({ spin: 0.8, targetCoord: { x: 3, y: 2 } }))).toEqual(curved);
+  });
+
   it("never calls Math.random while resolving a shot", () => {
     const random = vi.spyOn(Math, "random").mockImplementation(() => {
       throw new Error("Math.random must not decide a shot outcome");

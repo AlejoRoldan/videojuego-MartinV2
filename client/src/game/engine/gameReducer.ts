@@ -214,6 +214,15 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       };
     }
 
+    case "SET_SPIN":
+      return {
+        ...state,
+        ball: {
+          ...state.ball,
+          spin: Math.max(-1, Math.min(1, action.spin)),
+        },
+      };
+
     case "SET_TARGET": {
       const skipMath = state.levelConfig?.concept === "directions";
       return {

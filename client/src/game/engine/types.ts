@@ -380,6 +380,7 @@ export type GameAction =
   | { type: "SET_SCREEN"; screen: GameScreen }
   | { type: "START_LEVEL"; levelId: number }
   | { type: "SET_TARGET"; coord: Vec2 }
+  | { type: "SET_SPIN"; spin: number }
   | { type: "SUBMIT_MATH"; answer: number; timeLeft?: number; usedRetry?: boolean; responseTimeMs?: number; event?: MathAnsweredEvent }
   | { type: "MATH_ASSISTANCE"; stage: "hint" | "visual" | "urgent" }
   | { type: "GRANT_MATH_RETRY"; seconds: number }
