@@ -32,6 +32,7 @@ import {
   MAX_GAMEPLAY_EVENTS,
   selectFlowIntervention,
 } from "./flowEngine";
+import { isCornerGoalPoint, KEEPER_GOAL_Y, WALL_GOAL_Y } from "./physics";
 
 function createInitialBall(): BallState {
   return {
@@ -46,7 +47,7 @@ function createInitialBall(): BallState {
 
 function createInitialKeeper(): GoalkeeperState {
   return {
-    position: { x: 0.5, y: 0.5 },
+    position: { x: 0.5, y: KEEPER_GOAL_Y },
     speed: 0.3,
     direction: 1,
     diving: false,
@@ -135,6 +136,7 @@ export const initialGameState: GameState = {
   currentChallenge: null,
   shotsScored: 0,
   shotsTaken: 0,
+  shotHistory: [],
   score: 0,
   combo: 0,
   maxCombo: 0,
@@ -175,7 +177,7 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       const wall = config.hasWall
         ? Array.from({ length: config.wallCount }, (_, i) => ({
             id: i,
-            position: { x: 0.2 + (i / (config.wallCount - 1 || 1)) * 0.6, y: 0.5 },
+            position: { x: 0.2 + (i / (config.wallCount - 1 || 1)) * 0.6, y: WALL_GOAL_Y },
             number: Math.floor(Math.random() * 8) + 2,
           }))
         : [];
@@ -191,6 +193,7 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         currentChallenge: challenge,
         shotsScored: 0,
         shotsTaken: 0,
+        shotHistory: [],
         score: 0,
         combo: 0,
         maxCombo: 0,
@@ -225,15 +228,18 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
 
     case "SET_TARGET": {
       const skipMath = state.levelConfig?.concept === "directions";
+      const mathAlreadyResolved = state.lastMathCorrect !== null;
       return {
         ...state,
         targetCoord: action.coord,
-        phase: skipMath ? "aiming" : "math",
+        phase: skipMath || mathAlreadyResolved ? "aiming" : "math",
         ball: skipMath ? { ...state.ball, power: 80 } : state.ball,
-        adaptiveDifficulty: { ...state.adaptiveDifficulty, hintsEnabled: false },
-        currentMathPower: null,
-        lastMathCorrect: skipMath ? true : null,
-        lastMathResponseTimeMs: null,
+        adaptiveDifficulty: mathAlreadyResolved
+          ? state.adaptiveDifficulty
+          : { ...state.adaptiveDifficulty, hintsEnabled: false },
+        currentMathPower: mathAlreadyResolved ? state.currentMathPower : null,
+        lastMathCorrect: skipMath ? true : mathAlreadyResolved ? state.lastMathCorrect : null,
+        lastMathResponseTimeMs: mathAlreadyResolved ? state.lastMathResponseTimeMs : null,
       };
     }
 
@@ -360,7 +366,9 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       const baseScore = result.scored ? 100 : 0;
       const comboBonus = newCombo > 1 ? (newCombo - 1) * 50 : 0;
       const mathBonus = result.mathCorrect ? 25 : 0;
-      const multipliedScore = Math.round((baseScore + comboBonus + mathBonus) * result.bonusMultiplier);
+      const isCornerGoal = result.scored && isCornerGoalPoint(result.landingPoint);
+      const cornerBonus = isCornerGoal ? 50 : 0;
+      const multipliedScore = Math.round((baseScore + comboBonus + mathBonus + cornerBonus) * result.bonusMultiplier);
       const newScore = state.score + multipliedScore;
 
       let newParticles: Particle[] = [];
@@ -369,7 +377,7 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         newParticles = createConfettiParticles(0.5, 0.3, state.currentMathPower === "perfect" ? 50 : 30);
         newFloatingTexts = [createFloatingText("¡GOL!", 0.5, 0.3, "#FFD700", "xl")];
         if (newCombo > 1) newFloatingTexts.push(createFloatingText(`COMBO x${newCombo}!`, 0.5, 0.45, "#FF6B35", "lg"));
-        if (result.bonusMultiplier > 1.5) newFloatingTexts.push(createFloatingText("¡ESQUINA! BONUS", 0.5, 0.55, "#7BED9F", "md"));
+        if (isCornerGoal) newFloatingTexts.push(createFloatingText("¡ESQUINA! BONUS", 0.5, 0.55, "#7BED9F", "md"));
       } else if (result.savedByKeeper) {
         newFloatingTexts = [createFloatingText("¡Atajada!", 0.5, 0.3, "#FF4757", "lg")];
       } else if (result.blockedByWall) {
@@ -413,6 +421,7 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         ...state,
         shotsScored: newShotsScored,
         shotsTaken: newShotsTaken,
+        shotHistory: [...state.shotHistory, result.outcome],
         score: newScore,
         combo: newCombo,
         maxCombo: newMaxCombo,

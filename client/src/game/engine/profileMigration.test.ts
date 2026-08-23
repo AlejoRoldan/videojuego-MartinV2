@@ -1,3 +1,4 @@
+import "../test/coverageSetup";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_PROFILE,
@@ -158,4 +159,3 @@ describe("profile migration and persistence", () => {
     expect(removed).toEqual([...V9_STORAGE_KEYS]);
   });
 });
-

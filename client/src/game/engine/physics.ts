@@ -14,6 +14,11 @@ import type {
 import { clampGoalPoint, coordToGoalPoint, goalPointToCoord, isInsideGoal } from "./coordinates";
 import { getMathPowerModifiers } from "./mathPowers";
 
+/** Shared goal-plane positions used by both rendering and collision snapshots. */
+export const KEEPER_GOAL_Y = 0.78;
+export const WALL_GOAL_Y = 0.67;
+export const WALL_PLAYER_RADIUS = 0.13;
+
 export interface PhysicsConfig {
   power: number;
   targetX: number;
@@ -125,6 +130,13 @@ export function createKeeperSnapshot(position: Vec2, keeperSpeed: number, hasKee
   };
 }
 
+/** Corners are evaluated from the resolved landing point, never from a power bonus. */
+export function isCornerGoalPoint(point: Vec2): boolean {
+  const horizontalCorner = point.x <= 0.25 || point.x >= 0.75;
+  const verticalCorner = point.y <= 0.25 || point.y >= 0.75;
+  return horizontalCorner && verticalCorner;
+}
+
 function getKeeperReach(keeper: ShotInput["keeper"], power: number): number {
   return keeper.reach * (1 - (power / 100) * 0.3);
 }
@@ -207,8 +219,12 @@ export function resolveShot(input: ShotInput): ShotResolution {
   const keeper = runtime?.keeperReachMultiplier
     ? { ...input.keeper, reach: input.keeper.reach * runtime.keeperReachMultiplier }
     : input.keeper;
+  const wallReachMultiplier = runtime?.wallReachMultiplier ?? 1;
+  const effectiveWall = wallReachMultiplier === 1
+    ? input.wall
+    : input.wall.map((player) => ({ ...player, radius: player.radius * wallReachMultiplier }));
   const savedByKeeper = insideGoal && isSavedByKeeper(landingPoint, keeper, effectivePower);
-  const blockedByWall = insideGoal && !savedByKeeper && isBlockedByWall(landingPoint, input.wall, effectiveSpin);
+  const blockedByWall = insideGoal && !savedByKeeper && isBlockedByWall(landingPoint, effectiveWall, effectiveSpin);
   const scored = insideGoal && !savedByKeeper && !blockedByWall;
   const outcome = getOutcome(scored, savedByKeeper, blockedByWall);
   const reasonCode = getReasonCode({
@@ -228,6 +244,9 @@ export function resolveShot(input: ShotInput): ShotResolution {
   if (input.mathPower) appliedModifiers.push({ id: `math-power:${input.mathPower}`, amount: 1 });
   if (runtime?.keeperReachMultiplier !== undefined && runtime.keeperReachMultiplier !== 1) {
     appliedModifiers.push({ id: "flow:keeper-reach", amount: runtime.keeperReachMultiplier });
+  }
+  if (runtime?.wallReachMultiplier !== undefined && runtime.wallReachMultiplier !== 1) {
+    appliedModifiers.push({ id: "flow:wall-reach", amount: runtime.wallReachMultiplier });
   }
   if (runtime?.targetSizeMultiplier !== undefined && runtime.targetSizeMultiplier !== 1) {
     appliedModifiers.push({ id: "flow:target-size", amount: runtime.targetSizeMultiplier });
@@ -296,7 +315,7 @@ export function resolveShotResult(
       levelConfig.keeperSpeed,
       levelConfig.hasKeeper !== false,
     ),
-    wall: wall.map((player) => ({ position: player.position, radius: 0.18 })),
+    wall: wall.map((player) => ({ position: player.position, radius: WALL_PLAYER_RADIUS })),
     wind,
     seed,
     runtimeModifiers,

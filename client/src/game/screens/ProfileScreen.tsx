@@ -182,14 +182,14 @@ export default function ProfileScreen() {
           <div className="grid grid-cols-4 gap-2">
             {BALL_OPTIONS.map((ball) => {
               const canAfford = playerProfile.coins >= ball.cost;
-              const isSelected = (playerProfile as any).equippedBall === ball.id || ball.id === "default";
+              const isSelected = playerProfile.equippedBall === ball.id || ball.id === "default";
               return (
                 <button
                   key={ball.id}
                   onClick={() => {
                     if (canAfford) {
                       sounds.click();
-                      updateProfile({ equippedBall: ball.id } as any);
+                      updateProfile({ equippedBall: ball.id });
                     }
                   }}
                   className="rounded-xl p-2 flex flex-col items-center gap-1 active:scale-95"

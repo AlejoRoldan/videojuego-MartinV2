@@ -34,6 +34,7 @@ export type FlowAxis = "assistance" | "football" | "time" | "none";
 
 export interface LevelRuntimeModifiers {
   keeperReachMultiplier: number;
+  wallReachMultiplier: number;
   targetSizeMultiplier: number;
   assistanceLeadSeconds: number;
   windMultiplier: number;
@@ -321,6 +322,8 @@ export interface GameState {
   currentChallenge: MathChallenge | null;
   shotsScored: number;
   shotsTaken: number;
+  /** Ordered outcomes for the current level, used by the shot-by-shot HUD. */
+  shotHistory: ShotOutcome[];
   score: number;
   combo: number;
   maxCombo: number;

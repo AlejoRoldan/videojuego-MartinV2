@@ -20,7 +20,7 @@ import { useGame } from "../engine/GameContext";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { ArrowLeft, Zap } from "lucide-react";
 import type { FloatingText, MathPower, Particle, ShotReasonCode, Vec2 } from "../engine/types";
-import { createKeeperSnapshot } from "../engine/physics";
+import { createKeeperSnapshot, KEEPER_GOAL_Y, WALL_PLAYER_RADIUS } from "../engine/physics";
 import { coordToGoalPoint } from "../engine/coordinates";
 import { sounds } from "../engine/soundSystem";
 import { MATH_POWER_META, PERFECT_STREAK_TARGET } from "../engine/mathPowers";
@@ -62,10 +62,10 @@ function getReasonLabel(reasonCode: ShotReasonCode): string {
 export default function GameplayScreen() {
   const { state, goToScreen, setTarget, setSpin, submitMath, nextShot, shoot, updateKeeperSnapshot, playerProfile } = useGame();
   const {
-    levelConfig, phase, currentChallenge, shotsScored, shotsTaken,
-    score, combo, targetCoord, lastShotResult, ball, wall, adaptiveDifficulty,
+    levelConfig, phase, currentChallenge, shotsScored, shotsTaken, shotHistory,
+    score, combo, targetCoord, lastShotResult, ball, adaptiveDifficulty,
     currentMathPower, perfectStreak, mathPowerSequence,
-    runtimeModifiers, pendingFlowIntervention,
+    runtimeModifiers, pendingFlowIntervention, wall,
   } = state;
 
   const [ballPos, setBallPos] = useState({ x: 50, y: 85 });
@@ -115,9 +115,11 @@ export default function GameplayScreen() {
 
   const progressPct = Math.min(100, (shotsScored / levelConfig.shotsRequired) * 100);
   const evaluatedKeeperX = lastShotResult?.input.keeper.position.x;
+  const evaluatedKeeperY = lastShotResult?.input.keeper.position.y;
   const keeperDisplayX = phase === "shooting" || phase === "result"
     ? (evaluatedKeeperX ?? keeperX / 100) * 100
     : keeperX;
+  const keeperDisplayY = (evaluatedKeeperY ?? KEEPER_GOAL_Y) * 100;
   const flowNotice = pendingFlowIntervention
     ? pendingFlowIntervention.trigger === "math_struggle"
       ? "Te damos una ayuda extra para pensar."
@@ -194,7 +196,7 @@ export default function GameplayScreen() {
     keeperDirRef.current = 1;
     setKeeperX(50);
     updateKeeperSnapshot(createKeeperSnapshot(
-      { x: 0.5, y: 0.5 },
+      { x: 0.5, y: KEEPER_GOAL_Y },
       levelConfig.keeperSpeed,
       levelConfig.hasKeeper,
     ));
@@ -215,7 +217,7 @@ export default function GameplayScreen() {
         keeperXRef.current = next;
         setKeeperX(next);
         updateKeeperSnapshot(createKeeperSnapshot(
-          { x: next / 100, y: 0.5 },
+          { x: next / 100, y: KEEPER_GOAL_Y },
           levelConfig.keeperSpeed,
           levelConfig.hasKeeper,
         ));
@@ -328,7 +330,7 @@ export default function GameplayScreen() {
     hasShot.current = true;
     sounds.click();
     const keeperSnapshot = createKeeperSnapshot(
-      { x: keeperXRef.current / 100, y: 0.5 },
+      { x: keeperXRef.current / 100, y: KEEPER_GOAL_Y },
       levelConfig.keeperSpeed,
       levelConfig.hasKeeper,
     );
@@ -405,8 +407,8 @@ export default function GameplayScreen() {
             {Array.from({ length: levelConfig.shotsAllowed }).map((_, i) => (
               <div key={i} style={{
                 width: 14, height: 14, borderRadius: "50%",
-                background: i < shotsTaken
-                  ? (i < shotsScored ? "#2ECC40" : "#FF4757")
+                background: i < shotHistory.length
+                  ? (shotHistory[i] === "goal" ? "#2ECC40" : "#FF4757")
                   : "rgba(255,255,255,0.2)",
                 border: "1.5px solid rgba(255,255,255,0.3)",
                 transition: "background 0.3s",
@@ -542,7 +544,10 @@ export default function GameplayScreen() {
       >
         {/* Goal container — fills available height, maintains max width */}
         <div
+          data-selected-spin={ball.spin}
           data-shot-keeper-x={lastShotResult ? lastShotResult.input.keeper.position.x : undefined}
+          data-shot-keeper-y={lastShotResult ? lastShotResult.input.keeper.position.y : undefined}
+          data-shot-spin={lastShotResult ? lastShotResult.input.spin : undefined}
           style={{
             position: "relative",
             width: "100%",
@@ -601,40 +606,6 @@ export default function GameplayScreen() {
                 strokeLinecap="round"
               />
             </svg>
-          )}
-
-          {/* Barrier: rendered from the same wall positions used by deterministic physics. */}
-          {levelConfig.hasWall && wall.length > 0 && (
-            <div aria-hidden="true" data-free-kick-wall="true" style={{ position: "absolute", inset: 0, zIndex: 3, pointerEvents: "none" }}>
-              {wall.map((player) => (
-                <div
-                  key={player.id}
-                  data-wall-player={player.id}
-                  style={{
-                    position: "absolute",
-                    left: `${player.position.x * 100}%`,
-                    top: `${player.position.y * 100}%`,
-                    transform: "translate(-50%, -50%)",
-                    width: 28,
-                    height: 42,
-                    display: "flex",
-                    alignItems: "flex-end",
-                    justifyContent: "center",
-                    paddingBottom: 3,
-                    borderRadius: "14px 14px 8px 8px",
-                    background: "linear-gradient(180deg, #7B8FF7 0%, #3742FA 70%, #20277E 100%)",
-                    border: "2px solid rgba(255,255,255,0.78)",
-                    boxShadow: "0 4px 12px rgba(0,0,0,0.45)",
-                    color: "white",
-                    fontSize: 10,
-                    fontWeight: 900,
-                    textShadow: "0 1px 2px rgba(0,0,0,0.8)",
-                  }}
-                >
-                  {player.number}
-                </div>
-              ))}
-            </div>
           )}
 
           {/* Transparent target zones — the grid is only semantic, never a visible mesh. */}
@@ -720,15 +691,55 @@ export default function GameplayScreen() {
             })}
           </div>
 
+          {/* Visible wall uses the same normalized positions as collision detection. */}
+          {wall.length > 0 && (
+            <div
+              role="img"
+              aria-label={`Barrera visible de ${wall.length} jugadores`}
+              data-free-kick-wall="true"
+              style={{ position: "absolute", inset: 0, zIndex: 14, pointerEvents: "none" }}
+            >
+              {wall.map((player) => (
+                <div
+                  key={player.id}
+                  data-wall-player
+                  data-wall-x={player.position.x}
+                  data-wall-y={player.position.y}
+                  data-wall-radius={WALL_PLAYER_RADIUS * runtimeModifiers.wallReachMultiplier}
+                  aria-hidden="true"
+                  style={{
+                    position: "absolute",
+                    left: `${player.position.x * 100}%`,
+                    top: `${player.position.y * 100}%`,
+                    width: "clamp(34px, 11%, 48px)",
+                    height: 70,
+                    transform: `translate(-50%, -50%) scale(${runtimeModifiers.wallReachMultiplier})`,
+                    filter: "drop-shadow(0 5px 8px rgba(0,0,0,0.8))",
+                  }}
+                >
+                  <div style={{ width: 18, height: 18, margin: "0 auto -2px", borderRadius: "50%", background: "#C98A5A", border: "2px solid #27170F" }} />
+                  <div style={{ width: "100%", height: 34, borderRadius: "11px 11px 7px 7px", background: "linear-gradient(180deg, #FF6B35, #A82F20)", border: "2px solid #FFD7A8", color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 950 }}>
+                    {player.number}
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "center", gap: 5 }}>
+                    <span style={{ width: 9, height: 22, borderRadius: "0 0 7px 7px", background: "#172A52", border: "1px solid #9AB3E5" }} />
+                    <span style={{ width: 9, height: 22, borderRadius: "0 0 7px 7px", background: "#172A52", border: "1px solid #9AB3E5" }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Goalkeeper */}
           {levelConfig.hasKeeper && (
             <motion.div
               data-keeper-visual-x={keeperDisplayX / 100}
+              data-keeper-visual-y={keeperDisplayY / 100}
               style={{
                 position: "absolute",
-                bottom: "8%",
+                top: `${keeperDisplayY}%`,
                 left: `${keeperDisplayX}%`,
-                transform: "translateX(-50%)",
+                transform: "translate(-50%, -50%)",
                 zIndex: 15,
                 pointerEvents: "none",
               }}

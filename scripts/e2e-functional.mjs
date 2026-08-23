@@ -181,7 +181,7 @@ try {
   const coordinateLabels = await evaluate(`[...document.querySelectorAll('[aria-label^="Apuntar a coordenada"]:not([disabled])')].map((el) => el.getAttribute('aria-label'))`);
   assert(coordinateLabels.length >= 9, "The full aim grid is not available.");
 
-  const playFunctionalShot = async (label) => {
+  const playFunctionalShot = async (label, desiredSpin) => {
     const selector = `[aria-label="${label}"]`;
     const keeperBefore = await evaluate(`(() => {
       const image = document.querySelector('img[alt="Portero"]');
@@ -193,6 +193,18 @@ try {
     await evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
     await waitFor(async () => (await evaluate(`document.querySelectorAll('[aria-label^="Responder "]').length`)) > 0, "Math challenge did not render.");
     await solveMultiplication();
+    await waitFor(async () => Boolean(await evaluate(`Boolean(document.querySelector('[data-spin-control="true"]'))`)), "Spin control did not render after math.");
+    await evaluate(`(() => {
+      const input = document.querySelector('[data-spin-control="true"]');
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+      setValue.call(input, ${JSON.stringify(desiredSpin)});
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    })()`);
+    await waitFor(
+      async () => Number(await evaluate(`document.querySelector('[data-selected-spin]')?.dataset.selectedSpin`)) === desiredSpin,
+      "Selected spin did not reach game state.",
+    );
     let powerObserved = false;
     const destination = await waitFor(async () => await evaluate(`(() => {
       const power = /PRECISIÓN|CURVA|TURBO|PERFECTO|PODER|PERFECTA/i.test(document.body.innerText);
@@ -211,12 +223,18 @@ try {
       if (!marker || !keeper) return null;
       const rect = keeper.getBoundingClientRect();
       const visualX = Number(keeper.dataset.keeperVisualX);
+      const visualY = Number(keeper.dataset.keeperVisualY);
       const snapshotX = Number(document.querySelector('[data-shot-keeper-x]')?.dataset.shotKeeperX);
-      return { centerX: rect.left + rect.width / 2, left: keeper.style.left, visualX, snapshotX };
+      const snapshotY = Number(document.querySelector('[data-shot-keeper-y]')?.dataset.shotKeeperY);
+      const shotSpin = Number(document.querySelector('[data-shot-spin]')?.dataset.shotSpin);
+      return { centerX: rect.left + rect.width / 2, centerY: rect.top + rect.height / 2, left: keeper.style.left, top: keeper.style.top, visualX, visualY, snapshotX, snapshotY, shotSpin };
     })()`), "Keeper snapshot position was not visible during flight.", 6_000);
     assert(keeperBefore && keeperDuring, "Keeper position could not be measured.");
     assert(Number.isFinite(keeperDuring.visualX) && Number.isFinite(keeperDuring.snapshotX), `Keeper snapshot data was not exposed during flight: ${JSON.stringify(keeperDuring)}.`);
     assert(Math.abs(keeperDuring.visualX - keeperDuring.snapshotX) <= 0.001, `Keeper visual and physical snapshots diverged: ${keeperDuring.visualX} != ${keeperDuring.snapshotX}.`);
+    assert(Number.isFinite(keeperDuring.visualY) && Number.isFinite(keeperDuring.snapshotY), `Keeper vertical snapshot data was not exposed during flight: ${JSON.stringify(keeperDuring)}.`);
+    assert(Math.abs(keeperDuring.visualY - keeperDuring.snapshotY) <= 0.001, `Keeper visual and physical Y snapshots diverged: ${keeperDuring.visualY} != ${keeperDuring.snapshotY}.`);
+    assert(Math.abs(keeperDuring.shotSpin - desiredSpin) <= 0.001, `Selected spin was not persisted in the shot: ${keeperDuring.shotSpin} != ${desiredSpin}.`);
     const trailDots = await waitFor(async () => {
       const count = await evaluate(`document.querySelectorAll('.shot-trajectory-blur span').length`);
       return count > 0 ? count : false;
@@ -235,13 +253,13 @@ try {
 
   };
 
-  const firstShot = await playFunctionalShot(coordinateLabels[0]);
+  const firstShot = await playFunctionalShot(coordinateLabels[0], 0.8);
   assert(firstShot.trailDots > 0, "First shot trajectory blur was not observed during flight.");
   await evaluate(`document.querySelector('[aria-label="Continuar al siguiente tiro"]').focus()`);
   await pressEnter();
   await waitFor(async () => (await evaluate(`document.querySelectorAll('[aria-label^="Apuntar a coordenada"]:not([disabled])').length`)) > 0, "Next shot did not unlock.");
 
-  const secondShot = await playFunctionalShot(coordinateLabels.at(-1));
+  const secondShot = await playFunctionalShot(coordinateLabels.at(-1), -0.8);
   const aimDistance = Math.hypot(firstShot.destination.x - secondShot.destination.x, firstShot.destination.y - secondShot.destination.y);
   assert(aimDistance > 24, `Different aim cells collapsed to nearly the same visual destination: ${aimDistance.toFixed(1)}px.`);
   assert(secondShot.trailDots > 0, "Second shot trajectory blur was not observed during flight.");
@@ -255,12 +273,27 @@ try {
   })()`);
   assert(Object.values(masteryAfterShots).some((domain) => domain && domain.attempts >= 2), "Persistent mastery did not record the functional shots.");
 
-  await evaluate(`localStorage.setItem("tlm_profile", JSON.stringify({ schemaVersion: 2, name: "Martín", missionProgress: 2, missionCompletions: 0, unlockedLevels: [1, 2] }))`);
+  await evaluate(`localStorage.setItem("tlm_profile", JSON.stringify({ schemaVersion: 2, name: "Martín", missionProgress: 2, missionCompletions: 0, unlockedLevels: [1, 2, 5] }))`);
   await reload();
   await clickButtonContaining("Ritmo de\npartido");
   await evaluate(`[...document.querySelectorAll("button")].find((el) => el.textContent.includes("JUGAR")).focus()`);
   await pressEnter();
   await waitFor(async () => (await evaluate("document.body.innerText")).includes("Seleccionar Nivel"), "Level selector did not open for mission flow.");
+  await evaluate(`document.querySelector('[aria-label^="Jugar nivel 5:"]').click()`);
+  const wallState = await waitFor(async () => await evaluate(`(() => {
+    const players = [...document.querySelectorAll("[data-wall-player]")];
+    if (players.length !== 3) return null;
+    return players.map((player) => ({
+      x: Number(player.dataset.wallX),
+      y: Number(player.dataset.wallY),
+      radius: Number(player.dataset.wallRadius),
+      width: player.getBoundingClientRect().width,
+      height: player.getBoundingClientRect().height,
+    }));
+  })()`), "Level 5 did not render its three-player wall.");
+  assert(wallState.every((player) => Number.isFinite(player.x) && Number.isFinite(player.y) && player.radius > 0 && player.width > 0 && player.height > 0), `The visible wall is not aligned with physics data: ${JSON.stringify(wallState)}.`);
+  await evaluate(`document.querySelector('[aria-label="Volver a seleccionar nivel"]').click()`);
+  await waitFor(async () => (await evaluate("document.body.innerText")).includes("Seleccionar Nivel"), "Could not return from the wall level.");
   await evaluate(`document.querySelector('[aria-label^="Jugar nivel 1:"]').click()`);
   await waitFor(async () => (await evaluate(`document.querySelectorAll('[aria-label^="Apuntar a coordenada"]:not([disabled])').length`)) >= 9, "Level 1 gameplay did not render.");
   await evaluate(`document.querySelector('[aria-label^="Apuntar a coordenada"]').click()`);
@@ -330,7 +363,7 @@ try {
   const jsHeapUsed = performanceMetrics.metrics.find((metric) => metric.name === "JSHeapUsedSize")?.value ?? 0;
   const runtimeErrors = cdp.events.filter((event) => event.method === "Runtime.exceptionThrown");
   assert(runtimeErrors.length === 0, `Runtime exceptions detected: ${runtimeErrors.length}.`);
-  console.log(JSON.stringify({ status: "passed", checks: ["pace persistence", "level navigation", "keeper scale", "keeper snapshot", "math answer", "math power", "shot trail", "shot destination separation", "shot result", "next shot", "mastery persistence", "mission reward", "progress domains", "confirmed reset", "reduced motion", "accessibility"], firstShot, secondShot, aimDistance, masteryAfterShots, missionState, progressState, resetState, reducedMotion, accessibilityIssues, jsHeapUsed }, null, 2));
+  console.log(JSON.stringify({ status: "passed", checks: ["pace persistence", "level navigation", "keeper scale", "keeper snapshot", "math answer", "math power", "shot trail", "shot destination separation", "shot result", "next shot", "mastery persistence", "visible wall", "mission reward", "progress domains", "confirmed reset", "reduced motion", "accessibility"], firstShot, secondShot, aimDistance, masteryAfterShots, wallState, missionState, progressState, resetState, reducedMotion, accessibilityIssues, jsHeapUsed }, null, 2));
 } finally {
   cdp?.close();
   await stopProcess(chrome);

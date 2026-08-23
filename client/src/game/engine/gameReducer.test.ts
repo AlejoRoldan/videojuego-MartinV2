@@ -45,8 +45,15 @@ describe("game reducer", () => {
     expect(state.currentLevel).toBe(1);
     expect(state.shotsTaken).toBe(0);
     expect(state.shotsScored).toBe(0);
+    expect(state.shotHistory).toEqual([]);
     expect(state.phase).toBe("aiming");
     expect(state.lastMathCorrect).toBeNull();
+  });
+
+  it("creates the level-five wall at the same normalized height used by physics", () => {
+    const state = gameReducer(initialGameState, { type: "START_LEVEL", levelId: 5 });
+    expect(state.wall).toHaveLength(3);
+    expect(state.wall.every((player) => player.position.y === 0.67)).toBe(true);
   });
 
   it("ignores invalid level ids", () => {
@@ -69,6 +76,26 @@ describe("game reducer", () => {
     state = gameReducer(state, { type: "SET_TARGET", coord: { x: 1, y: 1 } });
     expect(state.phase).toBe("math");
     expect(state.targetCoord).toEqual({ x: 1, y: 1 });
+  });
+
+  it("lets the player refine aim after math without reopening or losing the earned power", () => {
+    let state = gameReducer(initialGameState, { type: "START_LEVEL", levelId: 3 });
+    state = gameReducer(state, { type: "SET_TARGET", coord: { x: 1, y: 1 } });
+    state = gameReducer(state, {
+      type: "SUBMIT_MATH",
+      answer: state.currentChallenge!.answer,
+      timeLeft: state.currentChallenge!.timeLimit,
+    });
+    const earnedPower = state.currentMathPower;
+    const powerSequence = state.mathPowerSequence;
+
+    state = gameReducer(state, { type: "SET_TARGET", coord: { x: 3, y: 2 } });
+
+    expect(state.phase).toBe("aiming");
+    expect(state.targetCoord).toEqual({ x: 3, y: 2 });
+    expect(state.lastMathCorrect).toBe(true);
+    expect(state.currentMathPower).toBe(earnedPower);
+    expect(state.mathPowerSequence).toBe(powerSequence);
   });
 
   it("keeps direction tutorial in aiming phase", () => {
@@ -192,6 +219,25 @@ describe("game reducer", () => {
     expect(state.particles.some((particle) => particle.type === "spark" && particle.color === "#B388FF")).toBe(true);
   });
 
+  it("awards and labels a corner bonus only for an actual resolved corner", () => {
+    const base = gameReducer(initialGameState, { type: "START_LEVEL", levelId: 1 });
+    const corner = gameReducer(base, { type: "SHOT_COMPLETE", result: makeResult({ bonusMultiplier: 2 }) });
+    const center = gameReducer(base, {
+      type: "SHOT_COMPLETE",
+      result: makeResult({
+        targetPoint: { x: 0.5, y: 0.5 },
+        landingPoint: { x: 0.5, y: 0.5 },
+        actualCoord: { x: 2, y: 2 },
+        targetCoord: { x: 2, y: 2 },
+        bonusMultiplier: 2,
+      }),
+    });
+
+    expect(corner.floatingTexts.some((item) => item.text === "¡ESQUINA! BONUS")).toBe(true);
+    expect(center.floatingTexts.some((item) => item.text === "¡ESQUINA! BONUS")).toBe(false);
+    expect(corner.score).toBeGreaterThan(center.score);
+  });
+
   it("recognizes correct mathematics even when the shot is saved", () => {
     const base = gameReducer(initialGameState, { type: "START_LEVEL", levelId: 1 });
     const result = makeResult({
@@ -239,6 +285,23 @@ describe("game reducer", () => {
     expect(state.combo).toBe(1);
     expect(state.score).toBeGreaterThan(0);
     expect(state.phase).toBe("result");
+    expect(state.shotHistory).toEqual(["goal"]);
+  });
+
+  it("preserves the real shot order for the HUD", () => {
+    let state = gameReducer(initialGameState, { type: "START_LEVEL", levelId: 1 });
+    state = gameReducer(state, {
+      type: "SHOT_COMPLETE",
+      result: makeResult({
+        outcome: "saved",
+        scored: false,
+        savedByKeeper: true,
+        reasonCode: "keeper_reach",
+      }),
+    });
+    state = gameReducer(state, { type: "SHOT_COMPLETE", result: makeResult() });
+
+    expect(state.shotHistory).toEqual(["saved", "goal"]);
   });
 
   it("uses the particle lifetime contract when ticking visual rewards", () => {

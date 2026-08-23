@@ -1,11 +1,16 @@
+import "../test/coverageSetup";
 import { describe, expect, it, vi } from "vitest";
 import {
   calculateTrajectory,
   createKeeperSnapshot,
+  isCornerGoalPoint,
+  KEEPER_GOAL_Y,
   resolveShot,
   resolveShotResult,
+  WALL_PLAYER_RADIUS,
 } from "./physics";
 import { coordToGoalPoint, goalPointToCoord } from "./coordinates";
+import { DEFAULT_RUNTIME_MODIFIERS } from "./flowEngine";
 import type { ShotInput } from "./types";
 
 function makeInput(overrides: Partial<ShotInput> = {}): ShotInput {
@@ -119,6 +124,27 @@ describe("V9 shot fairness and determinism", () => {
     expect(result.reasonCode).toBe("keeper_reach");
   });
 
+  it("keeps corner detection independent from Math Power bonuses", () => {
+    expect(isCornerGoalPoint({ x: 0.1, y: 0.1 })).toBe(true);
+    expect(isCornerGoalPoint({ x: 0.9, y: 0.9 })).toBe(true);
+    expect(isCornerGoalPoint({ x: 0.5, y: 0.5 })).toBe(false);
+    expect(isCornerGoalPoint({ x: 0.9, y: 0.5 })).toBe(false);
+  });
+
+  it("uses the shared wall radius in the legacy adapter", () => {
+    const result = resolveShotResult(
+      { x: 1, y: 1 },
+      true,
+      100,
+      0,
+      { position: { x: 0.95, y: KEEPER_GOAL_Y }, speed: 0, direction: 1, diving: false, diveTarget: null },
+      [{ id: 1, position: { x: 0.2, y: 0.67 }, number: 4 }],
+      { keeperSpeed: 0, hasKeeper: false, wind: false, windStrength: 0, gridQuadrants: 1 },
+    );
+
+    expect(result.input.wall[0]?.radius).toBe(WALL_PLAYER_RADIUS);
+  });
+
   it("PHY-05 scores a high corner against a slow central keeper", () => {
     const result = resolveShot(makeInput({
       targetCoord: { x: 3, y: 3 },
@@ -167,6 +193,22 @@ describe("V9 shot fairness and determinism", () => {
 
     expect(result.outcome).toBe("blocked");
     expect(result.reasonCode).toBe("wall_block");
+  });
+
+  it("shrinks the physical wall when flow assistance reduces its visible reach", () => {
+    const input = makeInput({
+      targetCoord: { x: 2, y: 1 },
+      wall: [{ position: { x: 0.5, y: 0.6983333333 }, radius: 0.14 }],
+    });
+    const blocked = resolveShot(input);
+    const assisted = resolveShot({
+      ...input,
+      runtimeModifiers: { ...DEFAULT_RUNTIME_MODIFIERS, wallReachMultiplier: 0.7 },
+    });
+
+    expect(blocked.outcome).toBe("blocked");
+    expect(assisted.outcome).toBe("goal");
+    expect(assisted.appliedModifiers).toContainEqual({ id: "flow:wall-reach", amount: 0.7 });
   });
 
   it("PHY-08 does not block a high shot over the wall", () => {

@@ -6,20 +6,29 @@ const root = process.cwd();
 const rawDir = path.join(root, ".coverage", "v8");
 const reportDir = path.join(root, "coverage");
 const functionThreshold = Number(process.env.COVERAGE_FUNCTION_THRESHOLD ?? 75);
-const minimumModules = Number(process.env.COVERAGE_MIN_MODULES ?? 5);
 const coreModules = new Set([
+  "coordinates.ts",
+  "flowEngine.ts",
   "gameFlow.ts",
   "gamePace.ts",
   "gameReducer.ts",
+  "mastery.ts",
   "mathPowers.ts",
   "physics.ts",
+  "profileMigration.ts",
   "mathEngine.ts",
 ]);
+const minimumModules = Number(process.env.COVERAGE_MIN_MODULES ?? coreModules.size);
 
 rmSync(rawDir, { recursive: true, force: true });
 mkdirSync(rawDir, { recursive: true });
 
-const run = spawnSync("pnpm", ["exec", "vitest", "run"], {
+const vitestEntry = path.join(root, "node_modules", "vitest", "vitest.mjs");
+const vitestArgs = [vitestEntry, "run"];
+if (process.env.COVERAGE_VITEST_CONFIG) {
+  vitestArgs.push("--config", process.env.COVERAGE_VITEST_CONFIG);
+}
+const run = spawnSync(process.execPath, vitestArgs, {
   cwd: root,
   env: { ...process.env, CORE_V8_COVERAGE_DIR: rawDir },
   stdio: "inherit",

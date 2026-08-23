@@ -15,7 +15,7 @@ import type {
 } from "./types";
 import { gameReducer, initialGameState } from "./gameReducer";
 import { getLevelById } from "../levels/levelData";
-import { createKeeperSnapshot, resolveShotResult } from "./physics";
+import { createKeeperSnapshot, KEEPER_GOAL_Y, resolveShotResult } from "./physics";
 import { sounds } from "./soundSystem";
 import {
   getAssistanceThresholds,
@@ -57,7 +57,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   const assistanceTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const mathStartedAtRef = useRef<number | null>(null);
   const inFlightRef = useRef(false);
-  const keeperSnapshotRef = useRef<KeeperSnapshot>(createKeeperSnapshot({ x: 0.5, y: 0.5 }, 0.3));
+  const keeperSnapshotRef = useRef<KeeperSnapshot>(createKeeperSnapshot({ x: 0.5, y: KEEPER_GOAL_Y }, 0.3));
   const sessionIdRef = useRef(`session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
 
   const clearAssistanceTimers = useCallback(() => {
@@ -80,7 +80,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     const config = getLevelById(levelId);
     if (config) {
       keeperSnapshotRef.current = createKeeperSnapshot(
-        { x: 0.5, y: 0.5 },
+        { x: 0.5, y: KEEPER_GOAL_Y },
         config.keeperSpeed,
         config.hasKeeper,
       );

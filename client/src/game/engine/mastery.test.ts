@@ -1,3 +1,4 @@
+import "../test/coverageSetup";
 import { describe, expect, it } from "vitest";
 import {
   MAX_MASTERY_HISTORY,
@@ -136,4 +137,3 @@ describe("persistent mastery by math domain", () => {
     expect(getMasteryLevel({ attempts: 5, correctWithoutHelp: 4, recentCorrect: [true, true, true, true, false] })).toBe("mastering");
   });
 });
-

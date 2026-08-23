@@ -8,9 +8,11 @@ import type {
 export const PERFORMANCE_WINDOW_SIZE = 5;
 export const FLOW_COOLDOWN_SHOTS = 3;
 export const MAX_GAMEPLAY_EVENTS = 200;
+export const MAX_ASSISTANCE_LEAD_SECONDS = 6;
 
 export const DEFAULT_RUNTIME_MODIFIERS: LevelRuntimeModifiers = {
   keeperReachMultiplier: 1,
+  wallReachMultiplier: 1,
   targetSizeMultiplier: 1,
   assistanceLeadSeconds: 0,
   windMultiplier: 1,
@@ -95,6 +97,40 @@ function lastThreeAreCorrectMathFootballMisses(window: PerformanceWindow): boole
   return shots.length === 3 && shots.every((shot) => shot.mathCorrect && !shot.scored);
 }
 
+function footballRecoveryModifier(window: PerformanceWindow): Pick<FlowIntervention, "change" | "modifiers"> {
+  const recentFailures = window.shots.slice(-3);
+  const counts = recentFailures.reduce<Record<"saved" | "blocked" | "missed", number>>(
+    (totals, shot) => {
+      if (shot.outcome !== "goal") totals[shot.outcome] += 1;
+      return totals;
+    },
+    { saved: 0, blocked: 0, missed: 0 },
+  );
+  const latestOutcome = recentFailures.at(-1)?.outcome;
+  const dominantOutcome = (["saved", "blocked", "missed"] as const).reduce((selected, outcome) => {
+    if (counts[outcome] > counts[selected]) return outcome;
+    if (counts[outcome] === counts[selected] && outcome === latestOutcome) return outcome;
+    return selected;
+  });
+
+  if (dominantOutcome === "blocked") {
+    return {
+      change: "-12 % de alcance de la barrera",
+      modifiers: { wallReachMultiplier: 0.88 },
+    };
+  }
+  if (dominantOutcome === "missed") {
+    return {
+      change: "+15 % de margen del arco",
+      modifiers: { targetSizeMultiplier: 1.15 },
+    };
+  }
+  return {
+    change: "-12 % de alcance del portero",
+    modifiers: { keeperReachMultiplier: 0.88 },
+  };
+}
+
 export function selectFlowIntervention(
   window: PerformanceWindow,
   runtime: LevelRuntimeModifiers,
@@ -112,17 +148,22 @@ export function selectFlowIntervention(
   }
 
   if (lastThreeAreCorrectMathFootballMisses(window)) {
+    const recovery = footballRecoveryModifier(window);
     return intervention(
       window,
       "football_struggle",
       "football",
-      "-12 % de alcance del obstáculo futbolístico",
-      "Tres resultados futbolísticos detenidos con matemática correcta; se ajusta solo el eje futbolístico.",
-      { keeperReachMultiplier: 0.88, windMultiplier: 0.88 },
+      recovery.change,
+      "Tres resultados futbolísticos detenidos con matemática correcta; se reduce solo el obstáculo dominante.",
+      recovery.modifiers,
     );
   }
 
-  if (window.footballSuccessRate !== null && window.footballSuccessRate < 0.6) {
+  if (
+    window.shots.length === PERFORMANCE_WINDOW_SIZE
+    && window.footballSuccessRate !== null
+    && window.footballSuccessRate < 0.6
+  ) {
     return intervention(
       window,
       "recovery",
@@ -161,10 +202,16 @@ export function applyFlowIntervention(
   if (!selected) return runtime;
   const next = { ...runtime };
   if (selected.axis === "assistance") {
-    next.assistanceLeadSeconds = Math.max(0, runtime.assistanceLeadSeconds + (selected.modifiers.assistanceLeadSeconds ?? 0));
+    next.assistanceLeadSeconds = Math.min(
+      MAX_ASSISTANCE_LEAD_SECONDS,
+      Math.max(0, runtime.assistanceLeadSeconds + (selected.modifiers.assistanceLeadSeconds ?? 0)),
+    );
   } else if (selected.axis === "football") {
     if (selected.modifiers.keeperReachMultiplier !== undefined) {
       next.keeperReachMultiplier = Math.max(0.7, runtime.keeperReachMultiplier * selected.modifiers.keeperReachMultiplier);
+    }
+    if (selected.modifiers.wallReachMultiplier !== undefined) {
+      next.wallReachMultiplier = Math.max(0.7, runtime.wallReachMultiplier * selected.modifiers.wallReachMultiplier);
     }
     if (selected.modifiers.targetSizeMultiplier !== undefined) {
       next.targetSizeMultiplier = Math.min(1.3, runtime.targetSizeMultiplier * selected.modifiers.targetSizeMultiplier);
