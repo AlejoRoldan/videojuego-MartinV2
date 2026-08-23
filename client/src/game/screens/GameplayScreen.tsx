@@ -20,6 +20,7 @@ import { useGame } from "../engine/GameContext";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { ArrowLeft, Zap } from "lucide-react";
 import type { FloatingText, MathPower, Particle, ShotReasonCode, Vec2 } from "../engine/types";
+import { createKeeperSnapshot } from "../engine/physics";
 import { sounds } from "../engine/soundSystem";
 import { MATH_POWER_META, PERFECT_STREAK_TARGET } from "../engine/mathPowers";
 import { getResultTransitionMs, getShotAnimationDuration, loadGamePace } from "../engine/gamePace";
@@ -48,7 +49,7 @@ function getReasonLabel(reasonCode: ShotReasonCode): string {
 }
 
 export default function GameplayScreen() {
-  const { state, goToScreen, setTarget, submitMath, nextShot, shoot, playerProfile } = useGame();
+  const { state, goToScreen, setTarget, submitMath, nextShot, shoot, updateKeeperSnapshot, playerProfile } = useGame();
   const {
     levelConfig, phase, currentChallenge, shotsScored, shotsTaken,
     score, combo, targetCoord, lastShotResult, ball, adaptiveDifficulty,
@@ -60,6 +61,7 @@ export default function GameplayScreen() {
   const [mathTimeLeft, setMathTimeLeft] = useState(15);
   const [keeperX, setKeeperX] = useState(50);
   const [shotFeedback, setShotFeedback] = useState<"flash" | "impact" | null>(null);
+  const keeperXRef = useRef(50);
   const missionCompletionCueRef = useRef(playerProfile.missionCompletions);
   const flightPower = lastShotResult?.input.mathPower;
   const powerVisual = flightPower ? POWER_VISUALS[flightPower] : null;
@@ -172,7 +174,18 @@ export default function GameplayScreen() {
     }
   }, [currentMathPower, mathPowerSequence, perfectStreak]);
 
-  // ── Goalkeeper animation ─────────────────────────────────
+  // ── Goalkeeper snapshot and animation ─────────────────────
+  useEffect(() => {
+    keeperXRef.current = 50;
+    keeperDirRef.current = 1;
+    setKeeperX(50);
+    updateKeeperSnapshot(createKeeperSnapshot(
+      { x: 0.5, y: 0.5 },
+      levelConfig.keeperSpeed,
+      levelConfig.hasKeeper,
+    ));
+  }, [levelConfig.id, levelConfig.hasKeeper, levelConfig.keeperSpeed, updateKeeperSnapshot]);
+
   useEffect(() => {
     if (!levelConfig.hasKeeper) return;
     if (phase !== "aiming" && phase !== "math") return;
@@ -182,18 +195,22 @@ export default function GameplayScreen() {
       const dt = Math.min((time - lastTimeRef.current) / 1000, 0.05);
       lastTimeRef.current = time;
       if (dt > 0) {
-        setKeeperX((prev) => {
-          let next = prev + keeperDirRef.current * speed * dt * 60;
-          if (next > 82) { next = 82; keeperDirRef.current = -1; }
-          if (next < 18) { next = 18; keeperDirRef.current = 1; }
-          return next;
-        });
+        let next = keeperXRef.current + keeperDirRef.current * speed * dt * 60;
+        if (next > 82) { next = 82; keeperDirRef.current = -1; }
+        if (next < 18) { next = 18; keeperDirRef.current = 1; }
+        keeperXRef.current = next;
+        setKeeperX(next);
+        updateKeeperSnapshot(createKeeperSnapshot(
+          { x: next / 100, y: 0.5 },
+          levelConfig.keeperSpeed,
+          levelConfig.hasKeeper,
+        ));
       }
       animId = requestAnimationFrame(animate);
     };
     animId = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(animId);
-  }, [phase, levelConfig.hasKeeper, levelConfig.keeperSpeed]);
+  }, [phase, levelConfig.hasKeeper, levelConfig.keeperSpeed, updateKeeperSnapshot]);
 
   // ── Ball trajectory animation ────────────────────────────
   // The visual path uses the same duration as the engine timeout. This avoids
@@ -296,8 +313,14 @@ export default function GameplayScreen() {
     if (hasShot.current) return;
     hasShot.current = true;
     sounds.click();
-    shoot();
-  }, [shoot]);
+    const keeperSnapshot = createKeeperSnapshot(
+      { x: keeperXRef.current / 100, y: 0.5 },
+      levelConfig.keeperSpeed,
+      levelConfig.hasKeeper,
+    );
+    updateKeeperSnapshot(keeperSnapshot);
+    shoot(keeperSnapshot);
+  }, [levelConfig.hasKeeper, levelConfig.keeperSpeed, shoot, updateKeeperSnapshot]);
 
   return (
     <div
@@ -505,6 +528,7 @@ export default function GameplayScreen() {
       >
         {/* Goal container — fills available height, maintains max width */}
         <div
+          data-shot-keeper-x={lastShotResult ? lastShotResult.input.keeper.position.x : undefined}
           style={{
             position: "relative",
             width: "100%",
@@ -632,6 +656,7 @@ export default function GameplayScreen() {
           {/* Goalkeeper */}
           {levelConfig.hasKeeper && (
             <motion.div
+              data-keeper-visual-x={keeperDisplayX / 100}
               style={{
                 position: "absolute",
                 bottom: "8%",

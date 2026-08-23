@@ -44,6 +44,27 @@ describe("GameContext coordination", () => {
     expect(inFlight).toBe(true);
   });
 
+  it("uses the snapshot-aware shoot callback once without fallback dispatch", () => {
+    vi.useFakeTimers();
+    const dispatch = vi.fn();
+    const markInFlight = vi.fn();
+    const onShoot = vi.fn();
+    scheduleAutoShoot({
+      dispatch,
+      isInFlight: () => false,
+      markInFlight,
+      onShoot,
+      delayMs: 100,
+    });
+
+    vi.advanceTimersByTime(99);
+    expect(onShoot).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(onShoot).toHaveBeenCalledOnce();
+    expect(markInFlight).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
   it("does not dispatch a duplicate shot while the ball is in flight", () => {
     vi.useFakeTimers();
     const dispatch = vi.fn();

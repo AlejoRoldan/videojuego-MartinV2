@@ -1,5 +1,40 @@
 import type { MathChallengeType, MathPower } from "./types";
 
+/** Number of consecutive fast, correct, first-attempt answers needed for the milestone. */
+export const PERFECT_STREAK_TARGET = 5;
+const PERFECT_RESPONSE_RATIO = 0.6;
+
+/**
+ * Updates the Perfect streak using only the submitted challenge outcome.
+ *
+ * The helper is deliberately pure: no timers, storage, audio or UI state are
+ * consulted. Invalid timing inputs fail closed and reset the streak.
+ */
+export function updatePerfectStreak(
+  currentStreak: number,
+  correct: boolean,
+  timeLeft: number | undefined,
+  timeLimit: number,
+  usedRetry = false,
+): number {
+  const normalizedStreak = Number.isFinite(currentStreak)
+    ? Math.max(0, Math.min(PERFECT_STREAK_TARGET, Math.trunc(currentStreak)))
+    : 0;
+  const responseRatio = timeLeft === undefined || !Number.isFinite(timeLeft) || !Number.isFinite(timeLimit) || timeLimit <= 0
+    ? 0
+    : Math.max(0, Math.min(1, timeLeft / timeLimit));
+  const isPerfectAnswer = correct && !usedRetry && responseRatio >= PERFECT_RESPONSE_RATIO;
+
+  return isPerfectAnswer
+    ? Math.min(PERFECT_STREAK_TARGET, normalizedStreak + 1)
+    : 0;
+}
+
+/** Returns true only when the complete five-answer Perfect milestone is reached. */
+export function isPerfectStreakComplete(streak: number): boolean {
+  return Number.isFinite(streak) && streak >= PERFECT_STREAK_TARGET;
+}
+
 export interface MathPowerModifiers {
   accuracyNoiseMultiplier: number;
   powerBonus: number;

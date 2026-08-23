@@ -3,6 +3,7 @@
 import type {
   AppliedModifier,
   GoalkeeperState,
+  KeeperSnapshot,
   MathPower,
   ShotInput,
   ShotReasonCode,
@@ -114,6 +115,14 @@ export function checkWallBlock(targetX: number, targetY: number, wall: WallPlaye
     if (dx < blockRadius) return true;
   }
   return false;
+}
+
+/** Builds the V9 keeper snapshot shared by UI capture and physics input creation. */
+export function createKeeperSnapshot(position: Vec2, keeperSpeed: number, hasKeeper = true): KeeperSnapshot {
+  return {
+    position: { ...position },
+    reach: hasKeeper ? Math.max(0, 0.25 + keeperSpeed * 0.35) : 0,
+  };
 }
 
 function getKeeperReach(keeper: ShotInput["keeper"], power: number): number {
@@ -270,6 +279,7 @@ export function resolveShotResult(
   mathPower: MathPower = null,
   seed = 1,
   runtimeModifiers?: ShotInput["runtimeModifiers"],
+  keeperSnapshot?: KeeperSnapshot,
 ): ShotResolution {
   const gridQuadrants: 1 | 4 = levelConfig.gridQuadrants
     ?? (targetCoord.x < 0 || targetCoord.y < 0 ? 4 : 1);
@@ -281,10 +291,11 @@ export function resolveShotResult(
     basePower: power,
     spin,
     mathPower,
-    keeper: {
-      position: keeper.position,
-      reach: levelConfig.hasKeeper === false ? 0 : 0.25 + levelConfig.keeperSpeed * 0.35,
-    },
+    keeper: keeperSnapshot ?? createKeeperSnapshot(
+      keeper.position,
+      levelConfig.keeperSpeed,
+      levelConfig.hasKeeper !== false,
+    ),
     wall: wall.map((player) => ({ position: player.position, radius: 0.18 })),
     wind,
     seed,

@@ -9,6 +9,7 @@ import { useGame } from "../engine/GameContext";
 import { ArrowLeft } from "lucide-react";
 import { useState } from "react";
 import { sounds } from "../engine/soundSystem";
+import { resetStoredProgress } from "../engine/profileMigration";
 
 const PLAYER_IMG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663638628604/YvKFUvGtEph4XyT2Rde5AJ/game-player-SZu757xkaDBb7ZA9f4TAtJ.webp";
 
@@ -220,7 +221,7 @@ export default function ProfileScreen() {
           <button
             onClick={() => {
               if (confirm("¿Resetear todo el progreso?")) {
-                localStorage.removeItem("tlm_profile");
+                resetStoredProgress();
                 window.location.reload();
               }
             }}

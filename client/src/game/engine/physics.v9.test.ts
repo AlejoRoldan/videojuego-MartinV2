@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   calculateTrajectory,
+  createKeeperSnapshot,
   resolveShot,
+  resolveShotResult,
 } from "./physics";
 import { coordToGoalPoint, goalPointToCoord } from "./coordinates";
 import type { ShotInput } from "./types";
@@ -63,7 +65,61 @@ describe("V9 shot fairness and determinism", () => {
     expect(result.mathCorrect).toBe(true);
   });
 
-  it("PHY-03 scores a high corner against a slow central keeper", () => {
+  it("PHY-03 persists the captured keeper snapshot and evaluates that exact position", () => {
+    const captured = createKeeperSnapshot({ x: 0.98, y: 0.08 }, 0.3);
+    const result = resolveShotResult(
+      { x: 2, y: 2 },
+      true,
+      100,
+      0,
+      {
+        position: { x: 0.5, y: 0.5 },
+        speed: 0.3,
+        direction: 1,
+        diving: false,
+        diveTarget: null,
+      },
+      [],
+      { keeperSpeed: 0.3, hasKeeper: true, wind: false, windStrength: 0, gridQuadrants: 1 },
+      null,
+      42,
+      undefined,
+      captured,
+    );
+
+    expect(result.input.keeper).toEqual(captured);
+    expect(result.outcome).toBe("goal");
+    expect(result.savedByKeeper).toBe(false);
+  });
+
+  it("PHY-04 keeps a centered captured keeper snapshot deterministic and saveable", () => {
+    const captured = createKeeperSnapshot({ x: 0.5, y: 0.5 }, 0.3);
+    const result = resolveShotResult(
+      { x: 2, y: 2 },
+      true,
+      100,
+      0,
+      {
+        position: { x: 0.98, y: 0.08 },
+        speed: 0.3,
+        direction: -1,
+        diving: false,
+        diveTarget: null,
+      },
+      [],
+      { keeperSpeed: 0.3, hasKeeper: true, wind: false, windStrength: 0, gridQuadrants: 1 },
+      null,
+      42,
+      undefined,
+      captured,
+    );
+
+    expect(result.input.keeper).toEqual(captured);
+    expect(result.outcome).toBe("saved");
+    expect(result.reasonCode).toBe("keeper_reach");
+  });
+
+  it("PHY-05 scores a high corner against a slow central keeper", () => {
     const result = resolveShot(makeInput({
       targetCoord: { x: 3, y: 3 },
       keeper: { position: { x: 0.5, y: 0.5 }, reach: 0.1 },

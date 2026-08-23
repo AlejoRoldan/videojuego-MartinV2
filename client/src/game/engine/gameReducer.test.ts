@@ -148,6 +148,31 @@ describe("game reducer", () => {
     expect(next.perfectStreak).toBe(0);
   });
 
+  it("celebrates the five-answer Perfect milestone only once", () => {
+    let state = gameReducer(initialGameState, { type: "START_LEVEL", levelId: 3 });
+    state = gameReducer(state, { type: "SET_TARGET", coord: { x: 1, y: 1 } });
+
+    for (let index = 0; index < 5; index += 1) {
+      state = gameReducer(state, {
+        type: "SUBMIT_MATH",
+        answer: state.currentChallenge!.answer,
+        timeLeft: state.currentChallenge!.timeLimit,
+      });
+    }
+
+    const milestoneText = "¡RACHA PERFECTA! 5 ACERTADOS";
+    expect(state.perfectStreak).toBe(5);
+    expect(state.floatingTexts.filter((item) => item.text === milestoneText)).toHaveLength(1);
+
+    state = gameReducer(state, {
+      type: "SUBMIT_MATH",
+      answer: state.currentChallenge!.answer,
+      timeLeft: state.currentChallenge!.timeLimit,
+    });
+    expect(state.perfectStreak).toBe(5);
+    expect(state.floatingTexts.filter((item) => item.text === milestoneText)).toHaveLength(1);
+  });
+
   it("emits Math Power spark particles for the resolved power", () => {
     const base = gameReducer(initialGameState, { type: "START_LEVEL", levelId: 1 });
     const result = makeResult({

@@ -183,15 +183,39 @@ try {
 
   const playFunctionalShot = async (label) => {
     const selector = `[aria-label="${label}"]`;
+    const keeperBefore = await evaluate(`(() => {
+      const image = document.querySelector('img[alt="Portero"]');
+      const keeper = image?.parentElement;
+      if (!keeper) return null;
+      const rect = keeper.getBoundingClientRect();
+      return { centerX: rect.left + rect.width / 2, left: keeper.style.left };
+    })()`);
     await evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
     await waitFor(async () => (await evaluate(`document.querySelectorAll('[aria-label^="Responder "]').length`)) > 0, "Math challenge did not render.");
     await solveMultiplication();
+    let powerObserved = false;
     const destination = await waitFor(async () => await evaluate(`(() => {
+      const power = /PRECISIÓN|CURVA|TURBO|PERFECTO|PODER|PERFECTA/i.test(document.body.innerText);
       const marker = document.querySelector('.shot-destination-marker');
+      if (power) window.__tlmPowerObserved = true;
       if (!marker) return null;
       const rect = marker.getBoundingClientRect();
-      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, power };
     })()`), "Shot destination marker did not render.", 6_000);
+    powerObserved = Boolean(destination.power) || Boolean(await evaluate("window.__tlmPowerObserved === true"));
+    const keeperDuring = await waitFor(async () => await evaluate(`(() => {
+      const marker = document.querySelector('.shot-destination-marker');
+      const image = document.querySelector('img[alt="Portero"]');
+      const keeper = image?.parentElement;
+      if (!marker || !keeper) return null;
+      const rect = keeper.getBoundingClientRect();
+      const visualX = Number(keeper.dataset.keeperVisualX);
+      const snapshotX = Number(document.querySelector('[data-shot-keeper-x]')?.dataset.shotKeeperX);
+      return { centerX: rect.left + rect.width / 2, left: keeper.style.left, visualX, snapshotX };
+    })()`), "Keeper snapshot position was not visible during flight.", 6_000);
+    assert(keeperBefore && keeperDuring, "Keeper position could not be measured.");
+    assert(Number.isFinite(keeperDuring.visualX) && Number.isFinite(keeperDuring.snapshotX), `Keeper snapshot data was not exposed during flight: ${JSON.stringify(keeperDuring)}.`);
+    assert(Math.abs(keeperDuring.visualX - keeperDuring.snapshotX) <= 0.001, `Keeper visual and physical snapshots diverged: ${keeperDuring.visualX} != ${keeperDuring.snapshotX}.`);
     const trailDots = await waitFor(async () => {
       const count = await evaluate(`document.querySelectorAll('.shot-trajectory-blur span').length`);
       return count > 0 ? count : false;
@@ -204,7 +228,8 @@ try {
       if (snapshot.result && resultSeenAt === 0) resultSeenAt = Date.now();
       return snapshot.result && impactObserved && Date.now() - resultSeenAt <= 260;
     }, "Shot did not reach a result with visible microimpact.", 8_000);
-    return { destination, trailDots, impactObserved };
+    return { destination, trailDots, impactObserved, powerObserved, keeperBefore, keeperDuring };
+
   };
 
   const firstShot = await playFunctionalShot(coordinateLabels[0]);
@@ -217,9 +242,15 @@ try {
   const aimDistance = Math.hypot(firstShot.destination.x - secondShot.destination.x, firstShot.destination.y - secondShot.destination.y);
   assert(aimDistance > 24, `Different aim cells collapsed to nearly the same visual destination: ${aimDistance.toFixed(1)}px.`);
   assert(secondShot.trailDots > 0, "Second shot trajectory blur was not observed during flight.");
+  assert(firstShot.powerObserved && secondShot.powerObserved, "Math Power feedback was not observed for both shots.");
   await evaluate(`document.querySelector('[aria-label="Continuar al siguiente tiro"]').focus()`);
   await pressEnter();
   await waitFor(async () => (await evaluate(`document.querySelectorAll('[aria-label^="Apuntar a coordenada"]:not([disabled])').length`)) > 0, "Second shot did not unlock the next attempt.");
+  const masteryAfterShots = await evaluate(`(() => {
+    const profile = JSON.parse(localStorage.getItem("tlm_profile") || "{}");
+    return profile.masteryByDomain || {};
+  })()`);
+  assert(Object.values(masteryAfterShots).some((domain) => domain && domain.attempts >= 2), "Persistent mastery did not record the functional shots.");
 
   await evaluate(`localStorage.setItem("tlm_profile", JSON.stringify({ schemaVersion: 2, name: "Martín", missionProgress: 2, missionCompletions: 0, unlockedLevels: [1, 2] }))`);
   await reload();
@@ -239,20 +270,64 @@ try {
   assert(missionState.missionProgress === 0 && missionState.missionCompletions === 1, "Mission profile was not completed and reset.");
   assert(missionState.coins >= 15 && missionState.stars >= 1, "Mission reward was not persisted.");
 
-  const accessibilityIssues = await evaluate(`(() => ({
-    unnamedButtons: [...document.querySelectorAll("button")].filter((el) => !el.disabled && !(el.getAttribute("aria-label") || el.textContent.trim())).length,
-    imagesWithoutAlt: [...document.querySelectorAll("img")].filter((el) => !el.hasAttribute("alt")).length,
-    viewportWidth: innerWidth,
-    contentWidth: document.documentElement.scrollWidth,
-  }))()`);
+  await evaluate(`document.querySelector('[aria-label="Volver a seleccionar nivel"]').click()`);
+  await waitFor(async () => (await evaluate("document.body.innerText")).includes("Seleccionar Nivel"), "Could not return to level select.");
+  await evaluate(`document.querySelector('[aria-label="Volver al inicio"]').click()`);
+  await waitFor(async () => (await evaluate("document.body.innerText")).includes("TIRO LIBRE"), "Could not return to home.");
+  await clickButtonContaining("Logros");
+  await waitFor(async () => (await evaluate("document.body.innerText")).includes("Mi Progreso"), "Progress screen did not open.");
+  const progressState = await evaluate(`(() => {
+    const text = document.body.innerText;
+    return {
+      hasMasteryHeading: text.includes("Tu dominio del balón"),
+      hasTables: text.includes("Tablas"),
+      hasCoordinates: text.includes("Coordenadas"),
+      hasAngles: text.includes("Ángulos y trayectorias"),
+      hasVelocity: text.includes("Velocidad y distancia"),
+    };
+  })()`);
+  assert(Object.values(progressState).every(Boolean), "Progress screen is missing one or more persistent concept domains.");
+  await evaluate(`document.querySelector('[aria-label="Volver al inicio"]').click()`);
+  await waitFor(async () => (await evaluate("document.body.innerText")).includes("TIRO LIBRE"), "Could not return home before reset.");
+  await clickButtonContaining("Perfil");
+  await waitFor(async () => (await evaluate("document.body.innerText")).includes("Mi Perfil"), "Profile screen did not open.");
+  await evaluate(`window.confirm = () => true; [...document.querySelectorAll("button")].find((button) => button.textContent.includes("Resetear progreso"))?.click()`);
+  await waitFor(async () => (await evaluate("document.body.innerText")).includes("⚽ JUGAR"), "Confirmed reset did not return to home.");
+  const resetState = await evaluate(`({ profile: localStorage.getItem("tlm_profile"), pace: localStorage.getItem("tlm_game_pace") })`);
+  assert(resetState.profile === null && resetState.pace === null, `Confirmed reset left V9 storage keys behind: ${JSON.stringify(resetState)}.`);
+  await cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
+  await reload();
+  await waitFor(async () => (await evaluate("document.body.innerText")).includes("⚽ JUGAR"), "Reduced-motion reload did not return home.");
+  const reducedMotion = await evaluate(`(() => {
+    const probe = document.createElement("div");
+    probe.className = "shot-microimpact";
+    document.body.appendChild(probe);
+    const style = getComputedStyle(probe);
+    const result = { animationName: style.animationName, animationDuration: style.animationDuration, transitionDuration: style.transitionDuration };
+    probe.remove();
+    return result;
+  })()`);
+  assert(reducedMotion.animationName === "none", `Reduced-motion impact animation remained active: ${JSON.stringify(reducedMotion)}.`);
+
+  const accessibilityIssues = await evaluate(`(() => {
+    const liveTexts = [...document.querySelectorAll("[aria-live]")].map((el) => el.textContent.trim()).filter(Boolean);
+    return {
+      unnamedButtons: [...document.querySelectorAll("button")].filter((el) => !el.disabled && !(el.getAttribute("aria-label") || el.textContent.trim())).length,
+      imagesWithoutAlt: [...document.querySelectorAll("img")].filter((el) => !el.hasAttribute("alt")).length,
+      duplicateLiveAnnouncements: liveTexts.length - new Set(liveTexts).size,
+      viewportWidth: innerWidth,
+      contentWidth: document.documentElement.scrollWidth,
+    };
+  })()`);
   assert(accessibilityIssues.unnamedButtons === 0, "An enabled button has no accessible name.");
   assert(accessibilityIssues.imagesWithoutAlt === 0, "An image has no alt attribute.");
+  assert(accessibilityIssues.duplicateLiveAnnouncements === 0, "Duplicate aria-live announcements were detected.");
   assert(accessibilityIssues.contentWidth <= accessibilityIssues.viewportWidth + 1, "Functional flow overflows the mobile viewport.");
   const performanceMetrics = await cdp.send("Performance.getMetrics");
   const jsHeapUsed = performanceMetrics.metrics.find((metric) => metric.name === "JSHeapUsedSize")?.value ?? 0;
   const runtimeErrors = cdp.events.filter((event) => event.method === "Runtime.exceptionThrown");
   assert(runtimeErrors.length === 0, `Runtime exceptions detected: ${runtimeErrors.length}.`);
-  console.log(JSON.stringify({ status: "passed", checks: ["pace persistence", "level navigation", "keeper scale", "math answer", "shot trail", "shot destination separation", "shot result", "next shot", "mission reward", "accessibility"], firstShot, secondShot, aimDistance, missionState, accessibilityIssues, jsHeapUsed }, null, 2));
+  console.log(JSON.stringify({ status: "passed", checks: ["pace persistence", "level navigation", "keeper scale", "keeper snapshot", "math answer", "math power", "shot trail", "shot destination separation", "shot result", "next shot", "mastery persistence", "mission reward", "progress domains", "confirmed reset", "reduced motion", "accessibility"], firstShot, secondShot, aimDistance, masteryAfterShots, missionState, progressState, resetState, reducedMotion, accessibilityIssues, jsHeapUsed }, null, 2));
 } finally {
   cdp?.close();
   await stopProcess(chrome);

@@ -1,6 +1,15 @@
 import { LEVELS } from "../levels/levelData";
+import {
+  createDefaultMasteryByDomain,
+  normalizeMasteryByDomain,
+  normalizeMasteryHistory,
+  type MasteryByDomain,
+  type MasteryHistoryEntry,
+} from "./mastery";
 
 export const PROFILE_SCHEMA_VERSION = 2;
+export const PROFILE_STORAGE_KEY = "tlm_profile";
+export const V9_STORAGE_KEYS = [PROFILE_STORAGE_KEY, "tlm_game_pace"] as const;
 
 export interface ProfileLevelProgress {
   stars: number;
@@ -29,6 +38,8 @@ export interface PlayerProfile {
   achievements: string[];
   equippedBall?: string;
   equippedKit?: string;
+  masteryByDomain: MasteryByDomain;
+  masteryHistory: MasteryHistoryEntry[];
 }
 
 export const DEFAULT_PROFILE: PlayerProfile = {
@@ -51,6 +62,8 @@ export const DEFAULT_PROFILE: PlayerProfile = {
   achievements: [],
   equippedBall: "default",
   equippedKit: "default",
+  masteryByDomain: createDefaultMasteryByDomain(),
+  masteryHistory: [],
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -135,17 +148,19 @@ export function migrateProfile(raw: unknown): PlayerProfile {
       : [],
     equippedBall: typeof raw.equippedBall === "string" ? raw.equippedBall : DEFAULT_PROFILE.equippedBall,
     equippedKit: typeof raw.equippedKit === "string" ? raw.equippedKit : DEFAULT_PROFILE.equippedKit,
+    masteryByDomain: normalizeMasteryByDomain(raw.masteryByDomain),
+    masteryHistory: normalizeMasteryHistory(raw.masteryHistory),
   };
 }
 
 export function loadProfile(storage: Pick<Storage, "getItem"> | null = typeof localStorage === "undefined" ? null : localStorage): PlayerProfile {
   if (!storage) return { ...DEFAULT_PROFILE };
-  const saved = storage.getItem("tlm_profile");
-  if (!saved) return { ...DEFAULT_PROFILE };
   try {
+    const saved = storage.getItem(PROFILE_STORAGE_KEY);
+    if (!saved) return { ...DEFAULT_PROFILE };
     return migrateProfile(JSON.parse(saved));
   } catch {
-    console.warn("[tlm] No se pudo leer el perfil; se usará un perfil seguro.");
+    console.warn("[tlm] No se pudo leer el perfil local; se usará un perfil seguro.");
     return { ...DEFAULT_PROFILE };
   }
 }
@@ -153,8 +168,21 @@ export function loadProfile(storage: Pick<Storage, "getItem"> | null = typeof lo
 export function saveProfile(profile: PlayerProfile, storage: Pick<Storage, "setItem"> | null = typeof localStorage === "undefined" ? null : localStorage): void {
   if (!storage) return;
   try {
-    storage.setItem("tlm_profile", JSON.stringify(migrateProfile(profile)));
+    storage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(migrateProfile(profile)));
   } catch {
     console.warn("[tlm] No se pudo guardar el perfil local.");
+  }
+}
+
+export function resetStoredProgress(
+  storage: Pick<Storage, "removeItem"> | null = typeof localStorage === "undefined" ? null : localStorage,
+): void {
+  if (!storage) return;
+  for (const key of V9_STORAGE_KEYS) {
+    try {
+      storage.removeItem(key);
+    } catch {
+      console.warn(`[tlm] No se pudo limpiar ${key}.`);
+    }
   }
 }

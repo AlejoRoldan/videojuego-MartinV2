@@ -8,12 +8,14 @@ import type {
   GameState,
   GameAction,
   Vec2,
+  KeeperSnapshot,
   FlowInterventionEvent,
   MathAnsweredEvent,
   ShotResolvedEvent,
 } from "./types";
 import { gameReducer, initialGameState } from "./gameReducer";
-import { resolveShotResult } from "./physics";
+import { getLevelById } from "../levels/levelData";
+import { createKeeperSnapshot, resolveShotResult } from "./physics";
 import { sounds } from "./soundSystem";
 import {
   getAssistanceThresholds,
@@ -25,6 +27,7 @@ import {
 } from "./gamePace";
 import { calculateRemainingMathTime, resolveMathCorrect, scheduleAutoShoot } from "./gameFlow";
 import { DEFAULT_PROFILE, loadProfile, saveProfile, type PlayerProfile } from "./profileMigration";
+import { recordMasteryAttempt } from "./mastery";
 
 interface GameContextValue {
   state: GameState;
@@ -33,7 +36,8 @@ interface GameContextValue {
   startLevel: (levelId: number) => void;
   setTarget: (coord: Vec2) => void;
   submitMath: (answer: number, timeLeft?: number, usedRetry?: boolean) => void;
-  shoot: () => void;
+  shoot: (keeperSnapshot?: KeeperSnapshot) => void;
+  updateKeeperSnapshot: (snapshot: KeeperSnapshot) => void;
   nextShot: () => void;
   resetGame: () => void;
   playerProfile: PlayerProfile;
@@ -52,6 +56,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   const assistanceTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const mathStartedAtRef = useRef<number | null>(null);
   const inFlightRef = useRef(false);
+  const keeperSnapshotRef = useRef<KeeperSnapshot>(createKeeperSnapshot({ x: 0.5, y: 0.5 }, 0.3));
   const sessionIdRef = useRef(`session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
 
   const clearAssistanceTimers = useCallback(() => {
@@ -71,10 +76,28 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     inFlightRef.current = false;
     clearAssistanceTimers();
     if (directionShootTimerRef.current) clearTimeout(directionShootTimerRef.current);
+    const config = getLevelById(levelId);
+    if (config) {
+      keeperSnapshotRef.current = createKeeperSnapshot(
+        { x: 0.5, y: 0.5 },
+        config.keeperSpeed,
+        config.hasKeeper,
+      );
+    }
     dispatch({ type: "START_LEVEL", levelId });
   }, [clearAssistanceTimers]);
 
-  const resolveCurrentShot = useCallback(() => {
+  const updateKeeperSnapshot = useCallback((snapshot: KeeperSnapshot) => {
+    keeperSnapshotRef.current = {
+      position: {
+        x: Math.max(0, Math.min(1, snapshot.position.x)),
+        y: Math.max(0, Math.min(1, snapshot.position.y)),
+      },
+      reach: Math.max(0, snapshot.reach),
+    };
+  }, []);
+
+  const resolveCurrentShot = useCallback((keeperSnapshot?: KeeperSnapshot) => {
     if (inFlightRef.current) return;
     const s = stateRef.current;
     if (!s.targetCoord || !s.levelConfig) return;
@@ -96,6 +119,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       s.currentMathPower,
       s.shotsTaken + 1,
       s.runtimeModifiers,
+      keeperSnapshot ?? keeperSnapshotRef.current,
     );
     inFlightRef.current = true;
     dispatch({ type: "SHOOT", resolution: result });
@@ -116,8 +140,8 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     }
   }, [resolveCurrentShot]);
 
-  const shoot = useCallback(() => {
-    resolveCurrentShot();
+  const shoot = useCallback((keeperSnapshot?: KeeperSnapshot) => {
+    resolveCurrentShot(keeperSnapshot);
   }, [resolveCurrentShot]);
 
   const submitMath = useCallback((answer: number, timeLeft?: number, usedRetry?: boolean) => {
@@ -229,8 +253,25 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         sounds.coinEarned();
         sounds.missionComplete();
       }
+      const masteryAttempt = state.currentChallenge && state.lastMathResponseTimeMs !== null
+        ? {
+          domain: state.currentChallenge.type,
+          correct: result.mathCorrect,
+          responseTimeMs: state.lastMathResponseTimeMs,
+          assistanceStage: state.currentChallenge.assistanceStage === "hint"
+            || state.currentChallenge.assistanceStage === "visual"
+            || state.currentChallenge.assistanceStage === "urgent"
+            ? state.currentChallenge.assistanceStage
+            : "none" as const,
+          usedRetry: Boolean(state.currentChallenge.retryGranted),
+          occurredAt: shotEvent.occurredAt,
+        }
+        : null;
       setPlayerProfile((prev) => {
         const nextMissionProgress = (prev.missionProgress + scored) % 3;
+        const mastery = masteryAttempt
+          ? recordMasteryAttempt(prev.masteryByDomain, prev.masteryHistory, masteryAttempt)
+          : { masteryByDomain: prev.masteryByDomain, masteryHistory: prev.masteryHistory };
         const next = {
           ...prev,
           totalGoals: prev.totalGoals + scored,
@@ -239,6 +280,8 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
           missionCompletions: prev.missionCompletions + (missionComplete ? 1 : 0),
           coins: prev.coins + (missionComplete ? 15 : 0),
           stars: prev.stars + (missionComplete ? 1 : 0),
+          masteryByDomain: mastery.masteryByDomain,
+          masteryHistory: mastery.masteryHistory,
         };
         saveProfile(next); return next;
       });
@@ -314,7 +357,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     dispatch({ type: "RESET_GAME" });
   }, [clearAssistanceTimers]);
 
-  return <GameContext.Provider value={{ state, dispatch, goToScreen, startLevel, setTarget, submitMath, shoot, nextShot, resetGame, playerProfile, updateProfile }}>{children}</GameContext.Provider>;
+  return <GameContext.Provider value={{ state, dispatch, goToScreen, startLevel, setTarget, submitMath, shoot, updateKeeperSnapshot, nextShot, resetGame, playerProfile, updateProfile }}>{children}</GameContext.Provider>;
 }
 
 export function useGame() {

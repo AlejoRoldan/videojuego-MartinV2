@@ -8,6 +8,7 @@ import { useGame } from "../engine/GameContext";
 import { LEVELS, CONCEPT_LABELS, CONCEPT_ICONS } from "../levels/levelData";
 import { ArrowLeft, Star, Trophy, Target, Zap } from "lucide-react";
 import { sounds } from "../engine/soundSystem";
+import { MASTERY_DOMAINS, type MasteryLevel } from "../engine/mastery";
 
 const ACHIEVEMENTS = [
   { id: "first_goal", icon: "⚽", name: "Primer Gol", desc: "Mete tu primer gol", xp: 50 },
@@ -103,6 +104,55 @@ export default function ProgressScreen() {
           <StatCard icon="🪙" label="Monedas" value={playerProfile.coins} color="#FFA502" />
         </motion.div>
 
+        {/* Concept mastery */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.25 }}
+          className="rounded-2xl p-4"
+          style={{ background: "rgba(255,255,255,0.05)", border: "2px solid rgba(255,255,255,0.1)" }}
+          aria-labelledby="mastery-heading"
+        >
+          <div id="mastery-heading" className="text-white font-black text-base mb-1" style={{ fontFamily: "'Fredoka One', cursive" }}>
+            🧠 Tu dominio del balón
+          </div>
+          <p className="text-white/55 text-xs mb-3">Cada tiro te ayuda a descubrir qué concepto ya controlas.</p>
+          <div className="space-y-3">
+            {MASTERY_DOMAINS.map((domain) => {
+              const mastery = playerProfile.masteryByDomain[domain];
+              const recentAttempts = mastery.recentCorrect.length;
+              const recentAccuracy = recentAttempts > 0
+                ? Math.round((mastery.recentCorrect.filter(Boolean).length / recentAttempts) * 100)
+                : 0;
+              let streak = 0;
+              for (let index = mastery.recentCorrect.length - 1; index >= 0 && mastery.recentCorrect[index]; index -= 1) streak += 1;
+              const meta = DOMAIN_META[domain];
+              return (
+                <div key={domain} className="rounded-xl p-3" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)" }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-xl" aria-hidden="true">{meta.icon}</span>
+                      <div className="min-w-0">
+                        <div className="text-white text-sm font-black truncate">{meta.label}</div>
+                        <div className="text-white/45 text-[11px]">{meta.description}</div>
+                      </div>
+                    </div>
+                    <span className="text-xs font-black px-2 py-1 rounded-full whitespace-nowrap" style={{ color: masteryColor(mastery.level), background: `${masteryColor(mastery.level)}22` }}>
+                      {MASTERY_LABELS[mastery.level]}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 mt-3 text-center">
+                    <div><div className="text-white font-black text-sm">{mastery.attempts}</div><div className="text-white/40 text-[10px]">Intentos</div></div>
+                    <div><div className="text-white font-black text-sm">{recentAttempts ? `${recentAccuracy}%` : "—"}</div><div className="text-white/40 text-[10px]">Precisión reciente</div></div>
+                    <div><div className="text-white font-black text-sm">{mastery.averageResponseTimeMs === null ? "—" : `${(mastery.averageResponseTimeMs / 1000).toFixed(1)} s`}</div><div className="text-white/40 text-[10px]">Tiempo medio</div></div>
+                  </div>
+                  <div className="text-orange-200 text-[11px] mt-2">{masteryRecommendation(mastery.level)} {streak > 0 ? `Racha actual: ${streak}.` : ""}</div>
+                </div>
+              );
+            })}
+          </div>
+        </motion.div>
+
         {/* Level progress */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -190,6 +240,31 @@ export default function ProgressScreen() {
       </div>
     </div>
   );
+}
+
+const DOMAIN_META = {
+  multiplication: { icon: "✖️", label: "Tablas", description: "Multiplicar con precisión" },
+  coordinate: { icon: "📍", label: "Coordenadas", description: "Leer zonas de la portería" },
+  angle: { icon: "📐", label: "Ángulos y trayectorias", description: "Elegir la curva del tiro" },
+  velocity: { icon: "⚡", label: "Velocidad y distancia", description: "Medir fuerza y recorrido" },
+} as const;
+
+const MASTERY_LABELS: Record<MasteryLevel, string> = {
+  discovering: "Descubriendo",
+  practicing: "Practicando",
+  mastering: "Casi dominado",
+  mastered: "¡Dominado!",
+};
+
+function masteryColor(level: MasteryLevel): string {
+  return level === "mastered" ? "#FFD700" : level === "mastering" ? "#7BED9F" : level === "practicing" ? "#4DD0E1" : "#B7C9E2";
+}
+
+function masteryRecommendation(level: MasteryLevel): string {
+  if (level === "mastered") return "¡Listo para presumirlo en la cancha!";
+  if (level === "mastering") return "Vas muy bien: practica un poco más para dominarlo.";
+  if (level === "practicing") return "Practica con calma y mira cómo mejora tu precisión.";
+  return "Empieza con tiros tranquilos para descubrirlo.";
 }
 
 function StatCard({ icon, label, value, color }: { icon: string; label: string; value: string | number; color: string }) {
