@@ -55,7 +55,7 @@ export class LiveRoomRequestError extends Error {
 
 export function sanitizeLiveRoomCode(value: unknown): string {
   return typeof value === "string"
-    ? value.toUpperCase().replace(/[^ABCDEFGHJKLMNPQRSTUVWXYZ2-9]/g, "").slice(0, 6)
+    ? value.toUpperCase().replace(/[^ABCDEFGHJKMNPQRSTUVWXYZ2-9]/g, "").slice(0, 6)
     : "";
 }
 
