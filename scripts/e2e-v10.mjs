@@ -147,7 +147,7 @@ try {
     const key = { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 };
     await cdp.send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...key });
     await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...key });
-    await waitFor(async () => /¡GOL!|¡Atajó!|¡Barrera!|¡Al palo!|¡Travesaño!|¡Afuera!|Faltó fuerza/.test(await evaluate("document.body.innerText")), "Shot did not reach a result", 12_000);
+    await waitFor(async () => /¡GOL!|¡Atajó!|¡Barrera!|¡Al palo!|¡Travesaño!|¡Afuera!|Faltó fuerza|PARTIDO \d+ COMPLETADO/.test(await evaluate("document.body.innerText")), "Shot did not reach a result", 12_000);
   };
 
   await cdp.send("Page.navigate", { url: APP_URL });
