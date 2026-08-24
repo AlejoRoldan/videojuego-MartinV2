@@ -7,7 +7,7 @@ describe("V10 gesture demo", () => {
   it("renders match missions and adaptive table progression without coordinates", () => {
     const html = renderToStaticMarkup(<GestureShotDemo />);
     expect(html).toContain("Juega con tu equipo");
-    expect(html).toContain("CAMINO AL 10 · FASE 10");
+    expect(html).toContain("CAMINO AL 10 · FASE 11");
     expect(html).toContain("Abrir juegos con amigos");
     expect(html).toContain("Silenciar sonido");
     expect(html).toContain('data-match-scoreboard="true"');
