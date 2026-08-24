@@ -6,8 +6,9 @@ import GestureShotDemo from "./GestureShotDemo";
 describe("V10 gesture demo", () => {
   it("renders match missions and adaptive table progression without coordinates", () => {
     const html = renderToStaticMarkup(<GestureShotDemo />);
-    expect(html).toContain("Cinco tiros, una misión");
-    expect(html).toContain("CAMINO AL 10 · FASE 8");
+    expect(html).toContain("Siente cada remate");
+    expect(html).toContain("CAMINO AL 10 · FASE 9");
+    expect(html).toContain("Silenciar sonido");
     expect(html).toContain('data-match-scoreboard="true"');
     expect(html).toContain("Tiro 1/5");
     expect(html).toContain("0/2 GOLES");

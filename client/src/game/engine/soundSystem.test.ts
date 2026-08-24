@@ -11,6 +11,11 @@ describe("sound system resilience", () => {
       sounds.goal();
       sounds.save();
       sounds.miss();
+      sounds.wall();
+      sounds.correct();
+      sounds.wrong();
+      sounds.click();
+      sounds.unlock();
       sounds.coinEarned();
       sounds.missionComplete();
     }).not.toThrow();
