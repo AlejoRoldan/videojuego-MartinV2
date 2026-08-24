@@ -8,6 +8,15 @@ import {
 } from "./footballCollisions";
 import { continueFlightWithSpin, createInteractiveShotConfig } from "./midFlightSpin";
 import {
+  createDefaultMultiplicationProgress,
+  getAdvancedUnlockProgress,
+  loadMultiplicationProgress,
+  recordCompletedMultiplicationRound,
+  saveMultiplicationProgress,
+  type MultiplicationProgressV1,
+  type TrackMasteryLevel,
+} from "./multiplicationProgress";
+import {
   MULTIPLICATION_TRACKS,
   createMultiplicationChallenge,
   evaluateMultiplicationAnswer,
@@ -28,6 +37,22 @@ interface DragState {
 
 const GOAL_DISTANCE_M = 18.3;
 const DEFAULT_CONFIG = createInteractiveShotConfig(24, 17, 0, GOAL_DISTANCE_M);
+
+const MASTERY_LABELS: Record<TrackMasteryLevel, string> = {
+  discovering: "Descubriendo",
+  practicing: "Practicando",
+  mastering: "Dominando",
+  mastered: "Dominada",
+};
+
+function getBrowserStorage(): Storage | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
 
 function getResultCopy(outcome: FootballOutcome) {
   if (outcome === "goal") return { title: "¡GOL!", detail: "La red frenó el balón como en un remate real.", accent: "#72f2a1" };
@@ -61,6 +86,7 @@ export default function GestureShotDemo() {
   const initialResolved = useMemo(() => resolveFootballShot(initialPhysicsResult, "open", DEFAULT_CONFIG.goal), [initialPhysicsResult]);
   const [resolvedShot, setResolvedShot] = useState<ResolvedFootballShot>(initialResolved);
   const [defenseMode, setDefenseMode] = useState<DefenseMode>("open");
+  const [savedProgress, setSavedProgress] = useState<MultiplicationProgressV1>(() => createDefaultMultiplicationProgress());
   const [tableTrack, setTableTrack] = useState<MultiplicationTrack>("tables-2-5");
   const [challengeIndex, setChallengeIndex] = useState(0);
   const challenge = useMemo(() => createMultiplicationChallenge(challengeIndex, tableTrack), [challengeIndex, tableTrack]);
@@ -68,8 +94,9 @@ export default function GestureShotDemo() {
   const [mathAttempts, setMathAttempts] = useState(0);
   const [mathFeedback, setMathFeedback] = useState("Resuelve para habilitar el remate");
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
-  const [correctCount, setCorrectCount] = useState(0);
   const [firstTryStreak, setFirstTryStreak] = useState(0);
+  const [roundFirstTry, setRoundFirstTry] = useState<boolean | null>(null);
+  const [justUnlockedAdvanced, setJustUnlockedAdvanced] = useState(false);
   const [phase, setPhase] = useState<DemoPhase>("ready");
   const [progress, setProgress] = useState(0);
   const [drag, setDrag] = useState<DragState | null>(null);
@@ -90,6 +117,13 @@ export default function GestureShotDemo() {
 
   useEffect(() => stopAnimation, []);
 
+  useEffect(() => {
+    const loaded = loadMultiplicationProgress(getBrowserStorage());
+    setSavedProgress(loaded);
+    setTableTrack(loaded.activeTrack);
+    setChallengeIndex(loaded.tracks[loaded.activeTrack].roundsCompleted);
+  }, []);
+
   const animate = (now: number) => {
     const deltaSeconds = Math.min(0.05, Math.max(0, (now - lastFrameMsRef.current) / 1000));
     lastFrameMsRef.current = now;
@@ -101,8 +135,17 @@ export default function GestureShotDemo() {
       frameRef.current = requestAnimationFrame(animate);
     } else {
       frameRef.current = null;
+      const recorded = recordCompletedMultiplicationRound(savedProgress, {
+        track: tableTrack,
+        firstTry: roundFirstTry === true,
+        scored: resolvedRef.current.outcome === "goal",
+        completedAt: new Date().toISOString(),
+      });
+      setSavedProgress(recorded.progress);
+      saveMultiplicationProgress(getBrowserStorage(), recorded.progress);
+      setJustUnlockedAdvanced(recorded.justUnlockedAdvanced);
       setPhase("result");
-      setHint("Observa el resultado de tu gesto");
+      setHint(recorded.justUnlockedAdvanced ? "¡Tablas 6–9 desbloqueadas por tu progreso!" : "Observa el resultado de tu gesto");
     }
   };
 
@@ -158,23 +201,35 @@ export default function GestureShotDemo() {
 
   const nextChallenge = () => {
     restorePhysicalPreview(defenseMode);
-    setChallengeIndex((current) => current + 1);
+    setChallengeIndex(savedProgress.tracks[tableTrack].roundsCompleted);
     setMathSolved(false);
     setMathAttempts(0);
     setSelectedAnswer(null);
+    setRoundFirstTry(null);
     setMathFeedback("Resuelve para habilitar el remate");
-    setHint("Resuelve la multiplicación para habilitar el tiro");
+    setHint(justUnlockedAdvanced
+      ? "¡Tablas 6–9 desbloqueadas por tu progreso!"
+      : "Resuelve la multiplicación para habilitar el tiro");
+    setJustUnlockedAdvanced(false);
   };
 
   const selectTableTrack = (track: MultiplicationTrack) => {
     if (phase === "flight") return;
+    if (track === "tables-6-9" && !savedProgress.advancedUnlocked) {
+      setMathFeedback("Completa el camino de tablas 2–5 para desbloquear este reto");
+      setHint("Las tablas 6–9 todavía están bloqueadas");
+      return;
+    }
+    const nextProgress = { ...savedProgress, activeTrack: track };
+    setSavedProgress(nextProgress);
+    saveMultiplicationProgress(getBrowserStorage(), nextProgress);
     restorePhysicalPreview(defenseMode);
     setTableTrack(track);
-    setChallengeIndex(0);
+    setChallengeIndex(nextProgress.tracks[track].roundsCompleted);
     setMathSolved(false);
     setMathAttempts(0);
     setSelectedAnswer(null);
-    setCorrectCount(0);
+    setRoundFirstTry(null);
     setFirstTryStreak(0);
     setMathFeedback("Resuelve para habilitar el remate");
     setHint(`Comienza con ${MULTIPLICATION_TRACKS[track].label.toLowerCase()}`);
@@ -188,7 +243,7 @@ export default function GestureShotDemo() {
     setMathFeedback(evaluation.feedback);
     if (evaluation.correct) {
       setMathSolved(true);
-      setCorrectCount((current) => current + 1);
+      setRoundFirstTry(evaluation.firstTry);
       setFirstTryStreak((current) => evaluation.firstTry ? current + 1 : 0);
       setHint(`${challenge.a} × ${challenge.b} = ${challenge.answer} · 🎯 Precisión lista`);
     } else {
@@ -198,7 +253,7 @@ export default function GestureShotDemo() {
   };
 
   const selectDefense = (mode: DefenseMode) => {
-    if (phase === "flight") return;
+    if (phase !== "ready") return;
     restorePhysicalPreview(mode);
     setDefenseMode(mode);
     setHint(mathSolved
@@ -275,6 +330,8 @@ export default function GestureShotDemo() {
   const forcePercent = launchPreview?.valid ? Math.round(launchPreview.force * 100) : launch ? Math.round(launch.force * 100) : 0;
   const resultCopy = getResultCopy(resolvedShot.outcome);
   const gestureColor = drag?.mode === "curve" ? "#c89bff" : "#ffbd59";
+  const currentTrackProgress = savedProgress.tracks[tableTrack];
+  const unlockProgress = getAdvancedUnlockProgress(savedProgress.tracks["tables-2-5"]);
 
   return (
     <main
@@ -333,8 +390,8 @@ export default function GestureShotDemo() {
 
         <header style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 10, padding: "max(14px, env(safe-area-inset-top, 14px)) 16px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, pointerEvents: "none" }}>
           <div>
-            <div style={{ color: "#ffd166", fontSize: 11, fontWeight: 950, letterSpacing: 1.25 }}>CAMINO AL 10 · FASE 5</div>
-            <h1 style={{ margin: "2px 0 0", fontSize: "clamp(22px, 6vw, 30px)", lineHeight: 1, textShadow: "0 2px 10px #000" }}>Resuelve y remata</h1>
+            <div style={{ color: "#ffd166", fontSize: 11, fontWeight: 950, letterSpacing: 1.25 }}>CAMINO AL 10 · FASE 6</div>
+            <h1 style={{ margin: "2px 0 0", fontSize: "clamp(22px, 6vw, 30px)", lineHeight: 1, textShadow: "0 2px 10px #000" }}>Domina y avanza</h1>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
             <span style={{ padding: "7px 10px", borderRadius: 999, background: "rgba(4,15,25,.62)", border: "1px solid rgba(255,255,255,.3)", fontSize: 12, fontWeight: 900, backdropFilter: "blur(7px)" }}>Reto {challengeIndex % 5 + 1}/5</span>
@@ -362,9 +419,9 @@ export default function GestureShotDemo() {
                 key={option.mode}
                 type="button"
                 aria-pressed={selected}
-                disabled={phase === "flight"}
+                disabled={phase !== "ready"}
                 onClick={() => selectDefense(option.mode)}
-                style={{ minHeight: 38, border: selected ? "2px solid #ffd166" : "1px solid rgba(255,255,255,.2)", borderRadius: 11, background: selected ? "rgba(255,189,89,.2)" : "rgba(255,255,255,.07)", color: selected ? "#ffe5a3" : "#e7f0eb", fontSize: 11, fontWeight: 950, opacity: phase === "flight" && !selected ? 0.46 : 1, pointerEvents: "auto" }}
+                style={{ minHeight: 38, border: selected ? "2px solid #ffd166" : "1px solid rgba(255,255,255,.2)", borderRadius: 11, background: selected ? "rgba(255,189,89,.2)" : "rgba(255,255,255,.07)", color: selected ? "#ffe5a3" : "#e7f0eb", fontSize: 11, fontWeight: 950, opacity: phase !== "ready" && !selected ? 0.46 : 1, pointerEvents: "auto" }}
               >
                 {option.label}
               </button>
@@ -376,18 +433,29 @@ export default function GestureShotDemo() {
           <section data-v10-multiplication-challenge="true" aria-labelledby="multiplication-question" style={{ position: "absolute", top: "28.5%", left: 14, right: 14, zIndex: 12, padding: "13px 14px 14px", borderRadius: 20, background: "rgba(3,13,22,.9)", border: "2px solid rgba(114,242,161,.62)", boxShadow: "0 12px 34px rgba(0,0,0,.34)", backdropFilter: "blur(12px)", pointerEvents: "auto" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 9 }}>
               <span style={{ color: "#72f2a1", fontSize: 10, fontWeight: 950, letterSpacing: 1.1 }}>ACADEMIA DE TABLAS</span>
-              <span style={{ color: "#d6e7df", fontSize: 10, fontWeight: 900 }}>Aciertos {correctCount} · Racha {firstTryStreak}</span>
+              <span style={{ color: "#d6e7df", fontSize: 10, fontWeight: 900 }}>{MASTERY_LABELS[currentTrackProgress.mastery]} · {currentTrackProgress.roundsCompleted} retos</span>
             </div>
             <div role="group" aria-label="Rango de tablas" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5, marginBottom: 10 }}>
               {(Object.keys(MULTIPLICATION_TRACKS) as MultiplicationTrack[]).map((track) => {
                 const selected = tableTrack === track;
+                const locked = track === "tables-6-9" && !savedProgress.advancedUnlocked;
                 return (
-                  <button key={track} type="button" aria-pressed={selected} onClick={() => selectTableTrack(track)} style={{ minHeight: 31, border: selected ? "2px solid #72f2a1" : "1px solid rgba(255,255,255,.2)", borderRadius: 10, background: selected ? "rgba(114,242,161,.16)" : "rgba(255,255,255,.06)", color: selected ? "#a6f8c2" : "#d6e2dc", fontSize: 11, fontWeight: 950 }}>
-                    {MULTIPLICATION_TRACKS[track].label}
+                  <button key={track} type="button" aria-pressed={selected} aria-disabled={locked} onClick={() => selectTableTrack(track)} style={{ minHeight: 31, border: selected ? "2px solid #72f2a1" : "1px solid rgba(255,255,255,.2)", borderRadius: 10, background: selected ? "rgba(114,242,161,.16)" : "rgba(255,255,255,.06)", color: selected ? "#a6f8c2" : locked ? "#91a099" : "#d6e2dc", fontSize: 11, fontWeight: 950, opacity: locked ? 0.7 : 1 }}>
+                    {locked ? "🔒 " : ""}{MULTIPLICATION_TRACKS[track].label}
                   </button>
                 );
               })}
             </div>
+            {!savedProgress.advancedUnlocked && (
+              <div aria-label={`Progreso para desbloquear tablas 6 a 9: ${unlockProgress}%`} style={{ margin: "0 1px 10px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 4, color: "#b9cbc2", fontSize: 9, fontWeight: 900 }}>
+                  <span>CAMINO A TABLAS 6–9</span><span>{unlockProgress}%</span>
+                </div>
+                <div style={{ height: 5, borderRadius: 99, overflow: "hidden", background: "rgba(255,255,255,.12)" }}>
+                  <div style={{ width: `${unlockProgress}%`, height: "100%", borderRadius: 99, background: "linear-gradient(90deg, #72f2a1, #ffd166)", transition: "width .2s ease" }} />
+                </div>
+              </div>
+            )}
             <h2 id="multiplication-question" style={{ margin: "2px 0 11px", textAlign: "center", fontSize: "clamp(30px, 9vw, 42px)", lineHeight: 1, letterSpacing: 1, textShadow: "0 2px 10px #000" }}>{challenge.question}</h2>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8 }}>
               {challenge.options.map((answer) => {
@@ -411,6 +479,8 @@ export default function GestureShotDemo() {
           <section role="status" style={{ position: "absolute", top: "29%", left: "50%", transform: "translateX(-50%)", zIndex: 10, width: "min(82%, 360px)", padding: "15px 18px", textAlign: "center", borderRadius: 19, background: "rgba(3,13,20,.82)", border: `2px solid ${resultCopy.accent}`, boxShadow: `0 0 30px ${resultCopy.accent}44`, backdropFilter: "blur(10px)", pointerEvents: "none" }}>
             <strong style={{ display: "block", color: resultCopy.accent, fontSize: 30, lineHeight: 1 }}>{resultCopy.title}</strong>
             <span style={{ display: "block", marginTop: 6, fontSize: 14 }}>{resultCopy.detail}</span>
+            <span style={{ display: "block", marginTop: 8, color: "#c9d9d1", fontSize: 11, fontWeight: 900 }}>Tablas: {MASTERY_LABELS[currentTrackProgress.mastery]} · Racha {firstTryStreak}</span>
+            {justUnlockedAdvanced && <span style={{ display: "block", marginTop: 8, color: "#ffd166", fontSize: 12, fontWeight: 950 }}>🔓 NUEVO RETO: TABLAS 6–9</span>}
           </section>
         )}
 
