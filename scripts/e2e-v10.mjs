@@ -297,7 +297,7 @@ try {
   await waitFor(async () => await evaluate("Boolean(document.querySelector('[data-lightning-lobby]'))"), "Lightning cup lobby did not open.");
   const lobbyState = await evaluate(`(() => ({
     text: document.body.innerText,
-    names: [...document.querySelectorAll('[data-lightning-lobby] input')].map((input) => input.value)
+    names: [...document.querySelectorAll('[data-lightning-lobby] input[aria-label^="Nombre del jugador"]')].map((input) => input.value)
   }))()`);
   assert(lobbyState.text.includes("SALA EN VIVO") && lobbyState.text.includes("INICIAR COPA POR TURNOS"), "Social play setup is incomplete.");
   assert(lobbyState.names[0] === "Martín" && lobbyState.names[1] === "Amigo 1", "Safe default player names are missing.");
