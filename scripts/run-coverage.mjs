@@ -16,6 +16,7 @@ const coreModules = new Set([
   "mathPowers.ts",
   "physics.ts",
   "profileMigration.ts",
+  "shotPhysics3d.ts",
   "mathEngine.ts",
 ]);
 const minimumModules = Number(process.env.COVERAGE_MIN_MODULES ?? coreModules.size);
@@ -59,7 +60,7 @@ const coveredFunctions = [...functions.values()].filter(Boolean).length;
 const functionCoverage = totalFunctions === 0 ? 0 : (coveredFunctions / totalFunctions) * 100;
 const summary = {
   provider: "Node.js V8 precise coverage",
-  scope: "client/src/game/{engine,math}",
+  scope: "client/src/game/{engine,math,v10}",
   modules: modules.size,
   functions: { covered: coveredFunctions, total: totalFunctions, percent: Number(functionCoverage.toFixed(2)) },
   thresholds: { minimumModules, functions: functionThreshold },
