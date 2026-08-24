@@ -6,6 +6,8 @@ const root = process.cwd();
 const rawDir = path.join(root, ".coverage", "v8");
 const reportDir = path.join(root, "coverage");
 const functionThreshold = Number(process.env.COVERAGE_FUNCTION_THRESHOLD ?? 75);
+// matchMission has its own exhaustive suite but Vitest currently inlines that small module,
+// so Node V8 does not expose a stable standalone script URL for this collector.
 const coreModules = new Set([
   "coordinates.ts",
   "flowEngine.ts",

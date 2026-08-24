@@ -9,6 +9,18 @@ import {
 import { continueFlightWithSpin, createInteractiveShotConfig } from "./midFlightSpin";
 import { selectAdaptiveMultiplicationChallenge, type AdaptivePracticeMode } from "./adaptiveMultiplication";
 import {
+  MATCH_GOAL_BONUS,
+  MATCH_MATH_BONUS,
+  MATCH_SHOT_LIMIT,
+  createMatchMission,
+  getMatchMissionSummary,
+  loadMatchMission,
+  recordMatchShot,
+  saveMatchMission,
+  startMatchRematch,
+  type MatchMissionV1,
+} from "./matchMission";
+import {
   createDefaultMultiplicationProgress,
   getAdvancedUnlockProgress,
   loadMultiplicationProgress,
@@ -94,8 +106,8 @@ export default function GestureShotDemo() {
   const [resolvedShot, setResolvedShot] = useState<ResolvedFootballShot>(initialResolved);
   const [defenseMode, setDefenseMode] = useState<DefenseMode>("open");
   const [savedProgress, setSavedProgress] = useState<MultiplicationProgressV2>(() => createDefaultMultiplicationProgress());
+  const [matchMission, setMatchMission] = useState<MatchMissionV1>(() => createMatchMission());
   const [tableTrack, setTableTrack] = useState<MultiplicationTrack>("tables-2-5");
-  const [challengeIndex, setChallengeIndex] = useState(0);
   const adaptiveSelection = useMemo(
     () => selectAdaptiveMultiplicationChallenge(savedProgress, tableTrack),
     [savedProgress, tableTrack],
@@ -129,10 +141,16 @@ export default function GestureShotDemo() {
   useEffect(() => stopAnimation, []);
 
   useEffect(() => {
-    const loaded = loadMultiplicationProgress(getBrowserStorage());
+    const storage = getBrowserStorage();
+    const loaded = loadMultiplicationProgress(storage);
     setSavedProgress(loaded);
     setTableTrack(loaded.activeTrack);
-    setChallengeIndex(loaded.tracks[loaded.activeTrack].roundsCompleted);
+    const loadedMission = loadMatchMission(storage);
+    const resumableMission = getMatchMissionSummary(loadedMission).completed
+      ? startMatchRematch(loadedMission)
+      : loadedMission;
+    setMatchMission(resumableMission);
+    if (resumableMission !== loadedMission) saveMatchMission(storage, resumableMission);
   }, []);
 
   const animate = (now: number) => {
@@ -155,6 +173,12 @@ export default function GestureShotDemo() {
       });
       setSavedProgress(recorded.progress);
       saveMultiplicationProgress(getBrowserStorage(), recorded.progress);
+      const updatedMission = recordMatchShot(matchMission, {
+        scored: resolvedRef.current.outcome === "goal",
+        firstTry: roundFirstTry === true,
+      });
+      setMatchMission(updatedMission);
+      saveMatchMission(getBrowserStorage(), updatedMission);
       setJustUnlockedAdvanced(recorded.justUnlockedAdvanced);
       setPhase("result");
       setHint(recorded.justUnlockedAdvanced ? "¡Tablas 6–9 desbloqueadas por tu progreso!" : "Observa el resultado de tu gesto");
@@ -213,7 +237,6 @@ export default function GestureShotDemo() {
 
   const nextChallenge = () => {
     restorePhysicalPreview(defenseMode);
-    setChallengeIndex(savedProgress.tracks[tableTrack].roundsCompleted);
     setMathSolved(false);
     setMathAttempts(0);
     setSelectedAnswer(null);
@@ -223,6 +246,15 @@ export default function GestureShotDemo() {
       ? "¡Tablas 6–9 desbloqueadas por tu progreso!"
       : "Resuelve la multiplicación para habilitar el tiro");
     setJustUnlockedAdvanced(false);
+  };
+
+  const startRematch = () => {
+    const nextMission = startMatchRematch(matchMission);
+    setMatchMission(nextMission);
+    saveMatchMission(getBrowserStorage(), nextMission);
+    setFirstTryStreak(0);
+    nextChallenge();
+    setHint("Nueva misión: completa cinco remates y busca las dos bonificaciones");
   };
 
   const selectTableTrack = (track: MultiplicationTrack) => {
@@ -237,7 +269,6 @@ export default function GestureShotDemo() {
     saveMultiplicationProgress(getBrowserStorage(), nextProgress);
     restorePhysicalPreview(defenseMode);
     setTableTrack(track);
-    setChallengeIndex(nextProgress.tracks[track].roundsCompleted);
     setMathSolved(false);
     setMathAttempts(0);
     setSelectedAnswer(null);
@@ -344,6 +375,7 @@ export default function GestureShotDemo() {
   const gestureColor = drag?.mode === "curve" ? "#c89bff" : "#ffbd59";
   const currentTrackProgress = savedProgress.tracks[tableTrack];
   const unlockProgress = getAdvancedUnlockProgress(savedProgress.tracks["tables-2-5"]);
+  const matchSummary = getMatchMissionSummary(matchMission);
 
   return (
     <main
@@ -402,11 +434,11 @@ export default function GestureShotDemo() {
 
         <header style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 10, padding: "max(14px, env(safe-area-inset-top, 14px)) 16px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, pointerEvents: "none" }}>
           <div>
-            <div style={{ color: "#ffd166", fontSize: 11, fontWeight: 950, letterSpacing: 1.25 }}>CAMINO AL 10 · FASE 7</div>
-            <h1 style={{ margin: "2px 0 0", fontSize: "clamp(22px, 6vw, 30px)", lineHeight: 1, textShadow: "0 2px 10px #000" }}>Mejora con cada tiro</h1>
+            <div style={{ color: "#ffd166", fontSize: 11, fontWeight: 950, letterSpacing: 1.25 }}>CAMINO AL 10 · FASE 8</div>
+            <h1 style={{ margin: "2px 0 0", fontSize: "clamp(22px, 6vw, 30px)", lineHeight: 1, textShadow: "0 2px 10px #000" }}>Cinco tiros, una misión</h1>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-            <span style={{ padding: "7px 10px", borderRadius: 999, background: "rgba(4,15,25,.62)", border: "1px solid rgba(255,255,255,.3)", fontSize: 12, fontWeight: 900, backdropFilter: "blur(7px)" }}>Reto {challengeIndex % 5 + 1}/5</span>
+            <span style={{ padding: "7px 10px", borderRadius: 999, background: "rgba(4,15,25,.62)", border: "1px solid rgba(255,255,255,.3)", fontSize: 12, fontWeight: 900, backdropFilter: "blur(7px)" }}>Tiro {matchSummary.currentShot}/{MATCH_SHOT_LIMIT}</span>
             <button onClick={leaveDemo} aria-label="Cerrar demo V10 y volver al juego" style={{ width: 42, height: 42, borderRadius: 13, border: "1px solid rgba(255,255,255,.34)", background: "rgba(4,15,25,.68)", color: "white", fontSize: 22, fontWeight: 900, backdropFilter: "blur(8px)", pointerEvents: "auto" }}>×</button>
           </div>
         </header>
@@ -423,7 +455,13 @@ export default function GestureShotDemo() {
           )}
         </section>
 
-        <div role="group" aria-label="Defensa del tiro" style={{ position: "absolute", top: "18.5%", left: 14, right: 14, zIndex: 11, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, padding: 4, borderRadius: 15, background: "rgba(3,14,23,.72)", border: "1px solid rgba(255,255,255,.24)", backdropFilter: "blur(9px)", pointerEvents: "auto" }}>
+        <div data-match-scoreboard="true" aria-label={`Partido ${matchMission.matchNumber}: ${matchSummary.goals} goles y ${matchSummary.firstTryCorrect} respuestas al primer intento`} style={{ position: "absolute", top: "18.5%", left: 14, right: 14, zIndex: 11, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, pointerEvents: "none" }}>
+          <span style={{ padding: "6px 7px", borderRadius: 11, background: "rgba(3,14,23,.78)", border: `1px solid ${matchSummary.goalBonusReached ? "#72f2a1" : "rgba(255,255,255,.24)"}`, textAlign: "center", fontSize: 10, fontWeight: 950, backdropFilter: "blur(8px)" }}>⚽ {matchSummary.goals}/{MATCH_GOAL_BONUS} GOLES</span>
+          <span style={{ padding: "6px 7px", borderRadius: 11, background: "rgba(3,14,23,.78)", border: `1px solid ${matchSummary.mathBonusReached ? "#ffd166" : "rgba(255,255,255,.24)"}`, textAlign: "center", fontSize: 10, fontWeight: 950, backdropFilter: "blur(8px)" }}>🎯 {matchSummary.firstTryCorrect}/{MATCH_MATH_BONUS} PRIMERA</span>
+          <span style={{ padding: "6px 7px", borderRadius: 11, background: "rgba(3,14,23,.78)", border: "1px solid rgba(255,255,255,.24)", textAlign: "center", fontSize: 10, fontWeight: 950, backdropFilter: "blur(8px)" }}>🏟️ PARTIDO {matchMission.matchNumber}</span>
+        </div>
+
+        <div role="group" aria-label="Defensa del tiro" style={{ position: "absolute", top: "23%", left: 14, right: 14, zIndex: 11, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, padding: 4, borderRadius: 15, background: "rgba(3,14,23,.72)", border: "1px solid rgba(255,255,255,.24)", backdropFilter: "blur(9px)", pointerEvents: "auto" }}>
           {DEFENSE_OPTIONS.map((option) => {
             const selected = defenseMode === option.mode;
             return (
@@ -442,7 +480,7 @@ export default function GestureShotDemo() {
         </div>
 
         {phase === "ready" && !mathSolved && (
-          <section data-v10-multiplication-challenge="true" aria-labelledby="multiplication-question" style={{ position: "absolute", top: "28.5%", left: 14, right: 14, zIndex: 12, padding: "13px 14px 14px", borderRadius: 20, background: "rgba(3,13,22,.9)", border: "2px solid rgba(114,242,161,.62)", boxShadow: "0 12px 34px rgba(0,0,0,.34)", backdropFilter: "blur(12px)", pointerEvents: "auto" }}>
+          <section data-v10-multiplication-challenge="true" aria-labelledby="multiplication-question" style={{ position: "absolute", top: "31%", left: 14, right: 14, zIndex: 12, padding: "13px 14px 14px", borderRadius: 20, background: "rgba(3,13,22,.9)", border: "2px solid rgba(114,242,161,.62)", boxShadow: "0 12px 34px rgba(0,0,0,.34)", backdropFilter: "blur(12px)", pointerEvents: "auto" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 9 }}>
               <span style={{ color: "#72f2a1", fontSize: 10, fontWeight: 950, letterSpacing: 1.1 }}>ACADEMIA DE TABLAS · ADAPTATIVA</span>
               <span style={{ color: "#d6e7df", fontSize: 10, fontWeight: 900 }}>{MASTERY_LABELS[currentTrackProgress.mastery]} · {currentTrackProgress.roundsCompleted} retos</span>
@@ -492,12 +530,24 @@ export default function GestureShotDemo() {
           <div aria-hidden="true" style={{ position: "absolute", left: "50%", bottom: "22%", width: 76, height: 76, transform: "translate(-50%, 50%)", borderRadius: "50%", border: "2px solid rgba(255,189,89,.9)", boxShadow: "0 0 22px rgba(255,189,89,.42)", zIndex: 5, animation: "pulse-glow 1.4s ease-in-out infinite", pointerEvents: "none" }} />
         )}
 
-        {phase === "result" && (
+        {phase === "result" && !matchSummary.completed && (
           <section role="status" style={{ position: "absolute", top: "29%", left: "50%", transform: "translateX(-50%)", zIndex: 10, width: "min(82%, 360px)", padding: "15px 18px", textAlign: "center", borderRadius: 19, background: "rgba(3,13,20,.82)", border: `2px solid ${resultCopy.accent}`, boxShadow: `0 0 30px ${resultCopy.accent}44`, backdropFilter: "blur(10px)", pointerEvents: "none" }}>
             <strong style={{ display: "block", color: resultCopy.accent, fontSize: 30, lineHeight: 1 }}>{resultCopy.title}</strong>
             <span style={{ display: "block", marginTop: 6, fontSize: 14 }}>{resultCopy.detail}</span>
             <span style={{ display: "block", marginTop: 8, color: "#c9d9d1", fontSize: 11, fontWeight: 900 }}>Tablas: {MASTERY_LABELS[currentTrackProgress.mastery]} · Racha {firstTryStreak}</span>
             {justUnlockedAdvanced && <span style={{ display: "block", marginTop: 8, color: "#ffd166", fontSize: 12, fontWeight: 950 }}>🔓 NUEVO RETO: TABLAS 6–9</span>}
+          </section>
+        )}
+
+        {phase === "result" && matchSummary.completed && (
+          <section data-match-summary="true" role="status" style={{ position: "absolute", top: "27%", left: "50%", transform: "translateX(-50%)", zIndex: 12, width: "min(86%, 380px)", padding: "18px 18px 17px", textAlign: "center", borderRadius: 22, background: "rgba(3,13,20,.94)", border: "2px solid #ffd166", boxShadow: "0 0 38px rgba(255,209,102,.32)", backdropFilter: "blur(12px)", pointerEvents: "none" }}>
+            <span style={{ display: "block", color: "#72f2a1", fontSize: 10, fontWeight: 950, letterSpacing: 1.35 }}>PARTIDO {matchMission.matchNumber} COMPLETADO</span>
+            <strong style={{ display: "block", marginTop: 5, color: "#ffd166", fontSize: 31, lineHeight: 1 }} aria-label={`${matchSummary.stars} de 3 estrellas`}>{"★".repeat(matchSummary.stars)}<span style={{ color: "rgba(255,255,255,.24)" }}>{"★".repeat(3 - matchSummary.stars)}</span></strong>
+            <span style={{ display: "block", marginTop: 9, fontSize: 14, fontWeight: 900 }}>{matchSummary.message}</span>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 13 }}>
+              <span style={{ padding: 9, borderRadius: 12, background: matchSummary.goalBonusReached ? "rgba(114,242,161,.15)" : "rgba(255,255,255,.07)", border: `1px solid ${matchSummary.goalBonusReached ? "#72f2a1" : "rgba(255,255,255,.16)"}`, fontSize: 11, fontWeight: 950 }}>⚽ {matchSummary.goals} GOLES<br /><small>{matchSummary.goalBonusReached ? "BONUS LOGRADO" : `META ${MATCH_GOAL_BONUS}`}</small></span>
+              <span style={{ padding: 9, borderRadius: 12, background: matchSummary.mathBonusReached ? "rgba(255,209,102,.15)" : "rgba(255,255,255,.07)", border: `1px solid ${matchSummary.mathBonusReached ? "#ffd166" : "rgba(255,255,255,.16)"}`, fontSize: 11, fontWeight: 950 }}>🎯 {matchSummary.firstTryCorrect} A LA PRIMERA<br /><small>{matchSummary.mathBonusReached ? "BONUS LOGRADO" : `META ${MATCH_MATH_BONUS}`}</small></span>
+            </div>
           </section>
         )}
 
@@ -512,7 +562,7 @@ export default function GestureShotDemo() {
             </div>
           </div>
           {phase === "result" ? (
-            <button onClick={nextChallenge} style={{ minHeight: 56, borderRadius: 17, border: "3px solid rgba(255,255,255,.4)", background: "linear-gradient(180deg, #ff7a3d, #e64921)", color: "white", fontSize: 19, fontWeight: 950, boxShadow: "0 6px 0 #9e2d17", pointerEvents: "auto" }}>SIGUIENTE RETO</button>
+            <button onClick={matchSummary.completed ? startRematch : nextChallenge} style={{ minHeight: 56, borderRadius: 17, border: "3px solid rgba(255,255,255,.4)", background: matchSummary.completed ? "linear-gradient(180deg, #32bd68, #168746)" : "linear-gradient(180deg, #ff7a3d, #e64921)", color: "white", fontSize: 19, fontWeight: 950, boxShadow: matchSummary.completed ? "0 6px 0 #0b5630" : "0 6px 0 #9e2d17", pointerEvents: "auto" }}>{matchSummary.completed ? "JUGAR REVANCHA" : "SIGUIENTE RETO"}</button>
           ) : (
             <p style={{ margin: 0, textAlign: "center", color: "rgba(225,238,230,.78)", fontSize: 11, fontWeight: 800 }}>
               {phase === "ready" ? mathSolved ? "Precisión matemática lista · ahora manda tu gesto" : "Primero calcula · luego remata" : spinApplied ? "El efecto ya fue aplicado" : "Un segundo gesto lateral curva la pelota"}
