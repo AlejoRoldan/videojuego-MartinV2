@@ -215,12 +215,25 @@ try {
   await completeKeyboardShot();
   const unlocked = await evaluate(`(() => {
     const progress = JSON.parse(localStorage.getItem('tlm_v10_multiplication_progress_v2') || localStorage.getItem('tlm_v10_multiplication_progress_v1') || 'null');
-    const button = [...document.querySelectorAll('button')].find((item) => item.textContent.includes('Tablas 6'));
-    return { advancedUnlocked: progress?.advancedUnlocked, lockedText: button?.textContent.includes('🔒'), announcement: document.body.innerText.includes('NUEVO RETO: TABLAS 6–9') };
+    return { advancedUnlocked: progress?.advancedUnlocked, announcement: document.body.innerText.includes('NUEVO RETO: TABLAS 6–9') };
   })()`);
   assert(unlocked.advancedUnlocked === true, "Performance path did not unlock tables 6–9.");
-  assert(unlocked.lockedText === false, "Advanced track remained visually locked.");
   assert(unlocked.announcement === true, "Unlock celebration was not announced.");
+
+  const continued = await evaluate(`(() => {
+    const button = [...document.querySelectorAll('button')].find((item) => item.textContent.includes('SIGUIENTE RETO'));
+    if (!button) return false;
+    button.click();
+    return true;
+  })()`);
+  assert(continued, "Next challenge button was not available after the result.");
+  const advancedTrack = await waitFor(async () => await evaluate(`(() => {
+    const button = [...document.querySelectorAll('button')].find((item) => item.textContent.includes('Tablas 6'));
+    if (!button) return null;
+    return { locked: button.textContent.includes('🔒'), ariaDisabled: button.getAttribute('aria-disabled') };
+  })()`), "Advanced multiplication track did not render for the next challenge.");
+  assert(advancedTrack.locked === false, "Advanced track remained visually locked.");
+  assert(advancedTrack.ariaDisabled !== "true", "Advanced track remained disabled after unlock.");
 
   const runtimeErrors = cdp.events.filter((event) => event.method === "Runtime.exceptionThrown");
   assert(runtimeErrors.length === 0, `Runtime exceptions detected: ${runtimeErrors.length}.`);
@@ -232,7 +245,7 @@ try {
     status: "passed",
     checks: ["mobile layout", "accessible buttons", "math answer", "keyboard shot", "round persistence", "reload recovery", "adaptive reinforcement", "V1 migration", "advanced unlock", "unlock announcement", "runtime errors", "heap budget"],
     firstRound: firstRound.tracks["tables-2-5"],
-    unlocked,
+    unlocked: { ...unlocked, advancedTrack },
     jsHeapUsed,
   }, null, 2));
 } finally {
