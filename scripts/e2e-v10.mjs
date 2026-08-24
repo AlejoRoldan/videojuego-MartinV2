@@ -163,7 +163,7 @@ try {
     unnamedButtons: [...document.querySelectorAll('button')].filter((button) => !button.disabled && !(button.getAttribute('aria-label') || button.textContent.trim())).length,
   }))()`);
   assert(initial.text.includes("ACADEMIA DE TABLAS"), "Multiplication academy is missing.");
-  assert(initial.text.includes("FASE 9") && initial.text.includes("Siente cada remate"), "Phase 9 stadium atmosphere is missing.");
+  assert(initial.text.includes("FASE 10") && initial.text.includes("Juega con tu equipo"), "Phase 10 social play entry is missing.");
   assert(initial.text.includes("Tiro 1/5") && initial.text.includes("0/2 GOLES"), "Initial match scoreboard is incorrect.");
   assert(initial.locked, "Advanced multiplication tables should start locked.");
   assert(initial.overflow <= 1, `Mobile layout overflows by ${initial.overflow}px.`);
@@ -287,6 +287,33 @@ try {
   })()`), "Rematch did not reset the five-shot mission.");
   assert(rematch === true, "Rematch state is inconsistent.");
 
+  const socialLobby = await evaluate(`(() => {
+    const button = document.querySelector('[aria-label="Abrir juegos con amigos"]');
+    if (!button) return null;
+    button.click();
+    return true;
+  })()`);
+  assert(socialLobby === true, "The social play entry could not be opened.");
+  await waitFor(async () => await evaluate("Boolean(document.querySelector('[data-lightning-lobby]'))"), "Lightning cup lobby did not open.");
+  const lobbyState = await evaluate(`(() => ({
+    text: document.body.innerText,
+    names: [...document.querySelectorAll('[data-lightning-lobby] input')].map((input) => input.value)
+  }))()`);
+  assert(lobbyState.text.includes("Copa relámpago") && lobbyState.text.includes("INICIAR COPA POR TURNOS"), "Lightning cup setup is incomplete.");
+  assert(lobbyState.names[0] === "Martín" && lobbyState.names[1] === "Amigo 1", "Safe default player names are missing.");
+  await evaluate(`[...document.querySelectorAll('button')].find((button) => button.textContent.includes('INICIAR COPA POR TURNOS'))?.click()`);
+  await waitFor(async () => await evaluate("Boolean(document.querySelector('[data-lightning-scoreboard]'))"), "Lightning cup did not start.");
+  const mirroredQuestion = await evaluate("document.querySelector('#multiplication-question')?.textContent?.trim()");
+  await solveCurrentQuestion();
+  await completeKeyboardShot();
+  assert(await evaluate("Boolean(document.querySelector('[data-lightning-turn-result]'))"), "Lightning turn result was not rendered.");
+  assert((await evaluate("document.body.innerText")).includes("SIGUE: AMIGO 1"), "The next player was not announced.");
+  await evaluate(`[...document.querySelectorAll('button')].find((button) => button.textContent.includes('SIGUE AMIGO 1'))?.click()`);
+  await waitFor(async () => await evaluate("Boolean(document.querySelector('#multiplication-question'))"), "Second lightning player did not receive a question.");
+  assert(await evaluate("document.querySelector('#multiplication-question')?.textContent?.trim()") === mirroredQuestion, "Players did not receive the same question in the round.");
+  const storedLightningCup = await evaluate(`JSON.parse(localStorage.getItem('tlm_v10_lightning_cup_v1') || 'null')`);
+  assert(storedLightningCup?.shots?.length === 1 && storedLightningCup?.activePlayerIndex === 1, "Lightning cup turn was not persisted.");
+
   const runtimeErrors = cdp.events.filter((event) => event.method === "Runtime.exceptionThrown");
   assert(runtimeErrors.length === 0, `Runtime exceptions detected: ${runtimeErrors.length}.`);
   const metrics = await cdp.send("Performance.getMetrics");
@@ -295,7 +322,7 @@ try {
 
   console.log(JSON.stringify({
     status: "passed",
-    checks: ["mobile layout", "accessible buttons", "sound preference", "match scoreboard", "math answer", "keyboard shot", "round persistence", "match persistence", "reload recovery", "adaptive reinforcement", "V1 migration", "advanced unlock", "unlock announcement", "five-shot completion", "stadium celebration", "rematch", "runtime errors", "heap budget"],
+    checks: ["mobile layout", "accessible buttons", "sound preference", "match scoreboard", "math answer", "keyboard shot", "round persistence", "match persistence", "reload recovery", "adaptive reinforcement", "V1 migration", "advanced unlock", "unlock announcement", "five-shot completion", "stadium celebration", "rematch", "lightning lobby", "safe player defaults", "multiplayer turn", "mirrored question", "lightning persistence", "runtime errors", "heap budget"],
     firstRound: firstRound.tracks["tables-2-5"],
     unlocked: { ...unlocked, advancedTrack },
     jsHeapUsed,
