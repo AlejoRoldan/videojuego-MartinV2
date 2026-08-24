@@ -19,6 +19,7 @@ import MathPowerOverlay from "./game/screens/MathPowerOverlay";
 import { AnimatePresence, motion } from "framer-motion";
 import ErrorBoundary from "./components/ErrorBoundary";
 import ShotPhysicsLab from "./game/v10/ShotPhysicsLab";
+import V10FieldPreview from "./game/v10/V10FieldPreview";
 
 function GameRouter() {
   const { state } = useGame();
@@ -68,13 +69,17 @@ function GameRouter() {
 function App() {
   const showPhysicsLab = typeof window !== "undefined"
     && new URLSearchParams(window.location.search).get("physicsLab") === "1";
+  const showV10Preview = typeof window !== "undefined"
+    && new URLSearchParams(window.location.search).get("v10Preview") === "1";
 
   return (
     <ErrorBoundary>
       <ThemeProvider defaultTheme="dark">
         <TooltipProvider>
           <Toaster />
-          {showPhysicsLab ? (
+          {showV10Preview ? (
+            <V10FieldPreview />
+          ) : showPhysicsLab ? (
             <ShotPhysicsLab />
           ) : (
             <GameProvider>
