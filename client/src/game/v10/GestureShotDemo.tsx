@@ -44,6 +44,23 @@ import {
   type StadiumAudioCue,
   type StadiumFeedback,
 } from "./stadiumAtmosphere";
+import {
+  LIGHTNING_MAX_PLAYERS,
+  LIGHTNING_SHOTS_PER_PLAYER,
+  clearLightningCup,
+  createLightningCup,
+  createLightningSeed,
+  createLightningShareUrl,
+  getActiveLightningPlayer,
+  getLightningChallenge,
+  getLightningStandings,
+  loadLightningCup,
+  readLightningInvitation,
+  recordLightningShot,
+  saveLightningCup,
+  type LightningCupV1,
+  type LightningInvitation,
+} from "./lightningCup";
 
 type DemoPhase = "ready" | "flight" | "result";
 
@@ -132,12 +149,20 @@ export default function GestureShotDemo() {
   const [matchMission, setMatchMission] = useState<MatchMissionV1>(() => createMatchMission());
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [stadiumFeedback, setStadiumFeedback] = useState<StadiumFeedback | null>(null);
+  const [lightningCup, setLightningCup] = useState<LightningCupV1 | null>(null);
+  const [socialOpen, setSocialOpen] = useState(false);
+  const [playerNames, setPlayerNames] = useState(["Martín", "Amigo 1"]);
+  const [invitation, setInvitation] = useState<LightningInvitation | null>(null);
+  const [shareUrl, setShareUrl] = useState("");
   const [tableTrack, setTableTrack] = useState<MultiplicationTrack>("tables-2-5");
   const adaptiveSelection = useMemo(
     () => selectAdaptiveMultiplicationChallenge(savedProgress, tableTrack),
     [savedProgress, tableTrack],
   );
-  const challenge = adaptiveSelection.challenge;
+  const challenge = useMemo(
+    () => lightningCup ? getLightningChallenge(lightningCup) : adaptiveSelection.challenge,
+    [adaptiveSelection.challenge, lightningCup],
+  );
   const [mathSolved, setMathSolved] = useState(false);
   const [mathAttempts, setMathAttempts] = useState(0);
   const [mathFeedback, setMathFeedback] = useState("Resuelve para habilitar el remate");
@@ -156,6 +181,8 @@ export default function GestureShotDemo() {
   const resolvedRef = useRef<ResolvedFootballShot>(initialResolved);
   const configRef = useRef<ShotPhysicsConfig>(DEFAULT_CONFIG);
   const soundEnabledRef = useRef(true);
+  const questionStartedAtRef = useRef(0);
+  const mathResponseTimeMsRef = useRef(0);
   const elapsedPhysicsSecondsRef = useRef(0);
   const lastFrameMsRef = useRef(0);
 
@@ -180,6 +207,18 @@ export default function GestureShotDemo() {
     const loadedSoundPreference = loadSoundPreference(storage);
     soundEnabledRef.current = loadedSoundPreference;
     setSoundEnabled(loadedSoundPreference);
+    const incomingInvitation = readLightningInvitation(window.location.search);
+    setInvitation(incomingInvitation);
+    const storedCup = loadLightningCup(storage);
+    if (storedCup?.status === "playing") {
+      setLightningCup(storedCup);
+      setTableTrack(storedCup.track);
+      setDefenseMode("keeper");
+      questionStartedAtRef.current = performance.now();
+    } else if (incomingInvitation) {
+      setTableTrack(incomingInvitation.track);
+      setSocialOpen(true);
+    }
   }, []);
 
   const animate = (now: number) => {
@@ -193,6 +232,26 @@ export default function GestureShotDemo() {
       frameRef.current = requestAnimationFrame(animate);
     } else {
       frameRef.current = null;
+      if (lightningCup?.status === "playing") {
+        const updatedCup = recordLightningShot(lightningCup, {
+          scored: resolvedRef.current.outcome === "goal",
+          firstTry: roundFirstTry === true,
+          responseTimeMs: mathResponseTimeMsRef.current,
+        });
+        setLightningCup(updatedCup);
+        saveLightningCup(getBrowserStorage(), updatedCup);
+        const feedback = getStadiumFeedback(resolvedRef.current.outcome, {
+          matchCompleted: updatedCup.status === "completed",
+          advancedUnlocked: false,
+        });
+        setStadiumFeedback(feedback);
+        playStadiumCue(feedback.audioCue, soundEnabledRef.current);
+        setPhase("result");
+        setHint(updatedCup.status === "completed"
+          ? "¡Copa completada! Mira el podio relámpago"
+          : `Turno terminado · sigue ${getActiveLightningPlayer(updatedCup).name}`);
+        return;
+      }
       const recorded = recordCompletedMultiplicationRound(savedProgress, {
         track: tableTrack,
         firstTry: roundFirstTry === true,
@@ -291,6 +350,87 @@ export default function GestureShotDemo() {
     setJustUnlockedAdvanced(false);
   };
 
+  const prepareLightningTurn = (cup: LightningCupV1) => {
+    restorePhysicalPreview("keeper");
+    setDefenseMode("keeper");
+    setTableTrack(cup.track);
+    setMathSolved(false);
+    setMathAttempts(0);
+    setSelectedAnswer(null);
+    setRoundFirstTry(null);
+    setJustUnlockedAdvanced(false);
+    setMathFeedback("Resuelve para habilitar el remate");
+    mathResponseTimeMsRef.current = 0;
+    questionStartedAtRef.current = performance.now();
+    setHint(`⚡ Turno de ${getActiveLightningPlayer(cup).name} · calcula y remata`);
+  };
+
+  const startLightningCup = (names: readonly string[], seed?: string) => {
+    if (soundEnabled) sounds.click();
+    const cup = createLightningCup(names, { seed, track: invitation?.track ?? tableTrack });
+    setLightningCup(cup);
+    saveLightningCup(getBrowserStorage(), cup);
+    setSocialOpen(false);
+    setShareUrl("");
+    prepareLightningTurn(cup);
+  };
+
+  const changePlayerCount = (count: number) => {
+    const safeCount = Math.min(LIGHTNING_MAX_PLAYERS, Math.max(2, count));
+    setPlayerNames((current) => Array.from({ length: safeCount }, (_, index) => current[index] ?? `Amigo ${index}`));
+  };
+
+  const updatePlayerName = (index: number, name: string) => {
+    setPlayerNames((current) => current.map((value, itemIndex) => itemIndex === index ? name : value));
+  };
+
+  const createSharedChallenge = async () => {
+    const nextInvitation = { seed: createLightningSeed(), track: tableTrack } satisfies LightningInvitation;
+    const url = createLightningShareUrl(window.location.href, nextInvitation);
+    setShareUrl(url);
+    try {
+      await navigator.clipboard?.writeText(url);
+    } catch {
+      // The visible URL remains selectable when clipboard access is unavailable.
+    }
+  };
+
+  const continueLightningCup = () => {
+    if (!lightningCup || lightningCup.status === "completed") return;
+    if (soundEnabled) sounds.click();
+    prepareLightningTurn(lightningCup);
+  };
+
+  const abandonLightningCup = () => {
+    clearLightningCup(getBrowserStorage());
+    setLightningCup(null);
+    setInvitation(null);
+    setShareUrl("");
+    setSocialOpen(true);
+    restorePhysicalPreview("open");
+    setDefenseMode("open");
+    const url = new URL(window.location.href);
+    url.searchParams.delete("lightning");
+    url.searchParams.delete("track");
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  };
+
+  const copyLightningResult = async () => {
+    if (!lightningCup) return;
+    const standings = getLightningStandings(lightningCup);
+    const result = [
+      "⚡ Copa relámpago · Tiro Libre Matemático",
+      ...standings.map((standing) => `${standing.rank}. ${standing.player.name}: ${standing.score} pts · ${standing.goals} goles · ${standing.firstTryCorrect} a la primera`),
+      window.location.origin,
+    ].join("\n");
+    try {
+      await navigator.clipboard?.writeText(result);
+      setShareUrl("Resultado copiado · listo para enviarlo al grupo");
+    } catch {
+      setShareUrl(result);
+    }
+  };
+
   const startRematch = () => {
     const nextMission = startMatchRematch(matchMission);
     setMatchMission(nextMission);
@@ -314,7 +454,7 @@ export default function GestureShotDemo() {
   };
 
   const selectTableTrack = (track: MultiplicationTrack) => {
-    if (phase === "flight") return;
+    if (phase === "flight" || lightningCup) return;
     if (track === "tables-6-9" && !savedProgress.advancedUnlocked) {
       setMathFeedback("Completa el camino de tablas 2–5 para desbloquear este reto");
       setHint("Las tablas 6–9 todavía están bloqueadas");
@@ -342,6 +482,9 @@ export default function GestureShotDemo() {
     setMathFeedback(evaluation.feedback);
     if (evaluation.correct) {
       if (soundEnabled) sounds.correct();
+      mathResponseTimeMsRef.current = questionStartedAtRef.current > 0
+        ? Math.max(0, performance.now() - questionStartedAtRef.current)
+        : 0;
       setMathSolved(true);
       setRoundFirstTry(evaluation.firstTry);
       setFirstTryStreak((current) => evaluation.firstTry ? current + 1 : 0);
@@ -354,7 +497,7 @@ export default function GestureShotDemo() {
   };
 
   const selectDefense = (mode: DefenseMode) => {
-    if (phase !== "ready") return;
+    if (phase !== "ready" || lightningCup) return;
     if (soundEnabled) sounds.click();
     restorePhysicalPreview(mode);
     setDefenseMode(mode);
@@ -435,6 +578,11 @@ export default function GestureShotDemo() {
   const currentTrackProgress = savedProgress.tracks[tableTrack];
   const unlockProgress = getAdvancedUnlockProgress(savedProgress.tracks["tables-2-5"]);
   const matchSummary = getMatchMissionSummary(matchMission);
+  const lightningStandings = lightningCup ? getLightningStandings(lightningCup) : [];
+  const activeLightningPlayer = lightningCup ? getActiveLightningPlayer(lightningCup) : null;
+  const activeLightningStanding = activeLightningPlayer
+    ? lightningStandings.find((standing) => standing.player.id === activeLightningPlayer.id)
+    : null;
 
   return (
     <main
@@ -506,11 +654,11 @@ export default function GestureShotDemo() {
 
         <header style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 10, padding: "max(14px, env(safe-area-inset-top, 14px)) 16px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, pointerEvents: "none" }}>
           <div>
-            <div style={{ color: "#ffd166", fontSize: 11, fontWeight: 950, letterSpacing: 1.25 }}>CAMINO AL 10 · FASE 9</div>
-            <h1 style={{ margin: "2px 0 0", fontSize: "clamp(21px, 5.7vw, 29px)", lineHeight: 1, textShadow: "0 2px 10px #000" }}>Siente cada remate</h1>
+            <div style={{ color: "#ffd166", fontSize: 11, fontWeight: 950, letterSpacing: 1.25 }}>CAMINO AL 10 · FASE 10</div>
+            <h1 style={{ margin: "2px 0 0", fontSize: "clamp(20px, 5.4vw, 28px)", lineHeight: 1, textShadow: "0 2px 10px #000" }}>{lightningCup ? "Copa relámpago" : "Juega con tu equipo"}</h1>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-            <span style={{ padding: "7px 10px", borderRadius: 999, background: "rgba(4,15,25,.62)", border: "1px solid rgba(255,255,255,.3)", fontSize: 12, fontWeight: 900, backdropFilter: "blur(7px)" }}>Tiro {matchSummary.currentShot}/{MATCH_SHOT_LIMIT}</span>
+            <button onClick={() => setSocialOpen(true)} disabled={phase === "flight"} aria-label="Abrir juegos con amigos" style={{ width: 42, height: 42, borderRadius: 13, border: lightningCup ? "2px solid #ffd166" : "1px solid rgba(255,255,255,.34)", background: lightningCup ? "rgba(255,209,102,.2)" : "rgba(4,15,25,.68)", color: "white", fontSize: 18, fontWeight: 900, backdropFilter: "blur(8px)", pointerEvents: "auto" }}>⚡</button>
             <button onClick={toggleSound} aria-pressed={soundEnabled} aria-label={soundEnabled ? "Silenciar sonido" : "Activar sonido"} style={{ width: 42, height: 42, borderRadius: 13, border: "1px solid rgba(255,255,255,.34)", background: "rgba(4,15,25,.68)", color: "white", fontSize: 18, fontWeight: 900, backdropFilter: "blur(8px)", pointerEvents: "auto" }}>{soundEnabled ? "🔊" : "🔇"}</button>
             <button onClick={leaveDemo} aria-label="Cerrar demo V10 y volver al juego" style={{ width: 42, height: 42, borderRadius: 13, border: "1px solid rgba(255,255,255,.34)", background: "rgba(4,15,25,.68)", color: "white", fontSize: 22, fontWeight: 900, backdropFilter: "blur(8px)", pointerEvents: "auto" }}>×</button>
           </div>
@@ -528,11 +676,19 @@ export default function GestureShotDemo() {
           )}
         </section>
 
-        <div data-match-scoreboard="true" aria-label={`Partido ${matchMission.matchNumber}: ${matchSummary.goals} goles y ${matchSummary.firstTryCorrect} respuestas al primer intento`} style={{ position: "absolute", top: "18.5%", left: 14, right: 14, zIndex: 11, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, pointerEvents: "none" }}>
-          <span style={{ padding: "6px 7px", borderRadius: 11, background: "rgba(3,14,23,.78)", border: `1px solid ${matchSummary.goalBonusReached ? "#72f2a1" : "rgba(255,255,255,.24)"}`, textAlign: "center", fontSize: 10, fontWeight: 950, backdropFilter: "blur(8px)" }}>⚽ {matchSummary.goals}/{MATCH_GOAL_BONUS} GOLES</span>
-          <span style={{ padding: "6px 7px", borderRadius: 11, background: "rgba(3,14,23,.78)", border: `1px solid ${matchSummary.mathBonusReached ? "#ffd166" : "rgba(255,255,255,.24)"}`, textAlign: "center", fontSize: 10, fontWeight: 950, backdropFilter: "blur(8px)" }}>🎯 {matchSummary.firstTryCorrect}/{MATCH_MATH_BONUS} PRIMERA</span>
-          <span style={{ padding: "6px 7px", borderRadius: 11, background: "rgba(3,14,23,.78)", border: "1px solid rgba(255,255,255,.24)", textAlign: "center", fontSize: 10, fontWeight: 950, backdropFilter: "blur(8px)" }}>🏟️ PARTIDO {matchMission.matchNumber}</span>
-        </div>
+        {lightningCup && activeLightningPlayer ? (
+          <div data-lightning-scoreboard="true" aria-label={`Copa relámpago: turno de ${activeLightningPlayer.name}, ronda ${lightningCup.roundIndex + 1} de ${LIGHTNING_SHOTS_PER_PLAYER}`} style={{ position: "absolute", top: "18.5%", left: 14, right: 14, zIndex: 11, display: "grid", gridTemplateColumns: "1.25fr 1fr 1fr", gap: 6, pointerEvents: "none" }}>
+            <span style={{ padding: "6px 7px", borderRadius: 11, background: "rgba(3,14,23,.84)", border: `1px solid ${activeLightningPlayer.color}`, color: activeLightningPlayer.color, textAlign: "center", fontSize: 10, fontWeight: 950, backdropFilter: "blur(8px)" }}>⚡ {activeLightningPlayer.name.toUpperCase()}</span>
+            <span style={{ padding: "6px 7px", borderRadius: 11, background: "rgba(3,14,23,.78)", border: "1px solid rgba(255,255,255,.24)", textAlign: "center", fontSize: 10, fontWeight: 950, backdropFilter: "blur(8px)" }}>RONDA {lightningCup.roundIndex + 1}/{LIGHTNING_SHOTS_PER_PLAYER}</span>
+            <span style={{ padding: "6px 7px", borderRadius: 11, background: "rgba(3,14,23,.78)", border: "1px solid rgba(255,255,255,.24)", textAlign: "center", fontSize: 10, fontWeight: 950, backdropFilter: "blur(8px)" }}>{activeLightningStanding?.score ?? 0} PTS</span>
+          </div>
+        ) : (
+          <div data-match-scoreboard="true" aria-label={`Partido ${matchMission.matchNumber}: ${matchSummary.goals} goles y ${matchSummary.firstTryCorrect} respuestas al primer intento`} style={{ position: "absolute", top: "18.5%", left: 14, right: 14, zIndex: 11, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, pointerEvents: "none" }}>
+            <span style={{ padding: "6px 7px", borderRadius: 11, background: "rgba(3,14,23,.78)", border: `1px solid ${matchSummary.goalBonusReached ? "#72f2a1" : "rgba(255,255,255,.24)"}`, textAlign: "center", fontSize: 10, fontWeight: 950, backdropFilter: "blur(8px)" }}>⚽ {matchSummary.goals}/{MATCH_GOAL_BONUS} GOLES</span>
+            <span style={{ padding: "6px 7px", borderRadius: 11, background: "rgba(3,14,23,.78)", border: `1px solid ${matchSummary.mathBonusReached ? "#ffd166" : "rgba(255,255,255,.24)"}`, textAlign: "center", fontSize: 10, fontWeight: 950, backdropFilter: "blur(8px)" }}>🎯 {matchSummary.firstTryCorrect}/{MATCH_MATH_BONUS} PRIMERA</span>
+            <span style={{ padding: "6px 7px", borderRadius: 11, background: "rgba(3,14,23,.78)", border: "1px solid rgba(255,255,255,.24)", textAlign: "center", fontSize: 10, fontWeight: 950, backdropFilter: "blur(8px)" }}>Tiro {matchSummary.currentShot}/{MATCH_SHOT_LIMIT} · PARTIDO {matchMission.matchNumber}</span>
+          </div>
+        )}
 
         <div role="group" aria-label="Defensa del tiro" style={{ position: "absolute", top: "23%", left: 14, right: 14, zIndex: 11, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, padding: 4, borderRadius: 15, background: "rgba(3,14,23,.72)", border: "1px solid rgba(255,255,255,.24)", backdropFilter: "blur(9px)", pointerEvents: "auto" }}>
           {DEFENSE_OPTIONS.map((option) => {
@@ -542,7 +698,7 @@ export default function GestureShotDemo() {
                 key={option.mode}
                 type="button"
                 aria-pressed={selected}
-                disabled={phase !== "ready"}
+                disabled={phase !== "ready" || Boolean(lightningCup)}
                 onClick={() => selectDefense(option.mode)}
                 style={{ minHeight: 38, border: selected ? "2px solid #ffd166" : "1px solid rgba(255,255,255,.2)", borderRadius: 11, background: selected ? "rgba(255,189,89,.2)" : "rgba(255,255,255,.07)", color: selected ? "#ffe5a3" : "#e7f0eb", fontSize: 11, fontWeight: 950, opacity: phase !== "ready" && !selected ? 0.46 : 1, pointerEvents: "auto" }}
               >
@@ -555,26 +711,26 @@ export default function GestureShotDemo() {
         {phase === "ready" && !mathSolved && (
           <section data-v10-multiplication-challenge="true" aria-labelledby="multiplication-question" style={{ position: "absolute", top: "31%", left: 14, right: 14, zIndex: 12, padding: "13px 14px 14px", borderRadius: 20, background: "rgba(3,13,22,.9)", border: "2px solid rgba(114,242,161,.62)", boxShadow: "0 12px 34px rgba(0,0,0,.34)", backdropFilter: "blur(12px)", pointerEvents: "auto" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 9 }}>
-              <span style={{ color: "#72f2a1", fontSize: 10, fontWeight: 950, letterSpacing: 1.1 }}>ACADEMIA DE TABLAS · ADAPTATIVA</span>
-              <span style={{ color: "#d6e7df", fontSize: 10, fontWeight: 900 }}>{MASTERY_LABELS[currentTrackProgress.mastery]} · {currentTrackProgress.roundsCompleted} retos</span>
+              <span style={{ color: "#72f2a1", fontSize: 10, fontWeight: 950, letterSpacing: 1.1 }}>{lightningCup ? "COPA JUSTA · MISMA PREGUNTA" : "ACADEMIA DE TABLAS · ADAPTATIVA"}</span>
+              <span style={{ color: "#d6e7df", fontSize: 10, fontWeight: 900 }}>{lightningCup ? `CÓDIGO ${lightningCup.seed}` : `${MASTERY_LABELS[currentTrackProgress.mastery]} · ${currentTrackProgress.roundsCompleted} retos`}</span>
             </div>
-            <div aria-label={`Modo adaptativo: ${ADAPTIVE_MODE_LABELS[adaptiveSelection.mode]}`} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, margin: "-2px 0 9px", color: "#ffe4a1", fontSize: 10, fontWeight: 900 }}>
-              <span>⚡ {ADAPTIVE_MODE_LABELS[adaptiveSelection.mode]}</span>
+            <div aria-label={lightningCup ? "Regla de equidad: todos reciben la misma pregunta de la ronda" : `Modo adaptativo: ${ADAPTIVE_MODE_LABELS[adaptiveSelection.mode]}`} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, margin: "-2px 0 9px", color: "#ffe4a1", fontSize: 10, fontWeight: 900 }}>
+              <span>⚡ {lightningCup ? `Ronda ${lightningCup.roundIndex + 1} de ${LIGHTNING_SHOTS_PER_PLAYER}` : ADAPTIVE_MODE_LABELS[adaptiveSelection.mode]}</span>
               <span aria-hidden="true">·</span>
-              <span>{adaptiveSelection.message}</span>
+              <span>{lightningCup ? "La precisión decide" : adaptiveSelection.message}</span>
             </div>
             <div role="group" aria-label="Rango de tablas" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5, marginBottom: 10 }}>
               {(Object.keys(MULTIPLICATION_TRACKS) as MultiplicationTrack[]).map((track) => {
                 const selected = tableTrack === track;
                 const locked = track === "tables-6-9" && !savedProgress.advancedUnlocked;
                 return (
-                  <button key={track} type="button" aria-pressed={selected} aria-disabled={locked} onClick={() => selectTableTrack(track)} style={{ minHeight: 31, border: selected ? "2px solid #72f2a1" : "1px solid rgba(255,255,255,.2)", borderRadius: 10, background: selected ? "rgba(114,242,161,.16)" : "rgba(255,255,255,.06)", color: selected ? "#a6f8c2" : locked ? "#91a099" : "#d6e2dc", fontSize: 11, fontWeight: 950, opacity: locked ? 0.7 : 1 }}>
+                  <button key={track} type="button" disabled={Boolean(lightningCup)} aria-pressed={selected} aria-disabled={locked || Boolean(lightningCup)} onClick={() => selectTableTrack(track)} style={{ minHeight: 31, border: selected ? "2px solid #72f2a1" : "1px solid rgba(255,255,255,.2)", borderRadius: 10, background: selected ? "rgba(114,242,161,.16)" : "rgba(255,255,255,.06)", color: selected ? "#a6f8c2" : locked ? "#91a099" : "#d6e2dc", fontSize: 11, fontWeight: 950, opacity: locked ? 0.7 : 1 }}>
                     {locked ? "🔒 " : ""}{MULTIPLICATION_TRACKS[track].label}
                   </button>
                 );
               })}
             </div>
-            {!savedProgress.advancedUnlocked && (
+            {!lightningCup && !savedProgress.advancedUnlocked && (
               <div aria-label={`Progreso para desbloquear tablas 6 a 9: ${unlockProgress}%`} style={{ margin: "0 1px 10px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 4, color: "#b9cbc2", fontSize: 9, fontWeight: 900 }}>
                   <span>CAMINO A TABLAS 6–9</span><span>{unlockProgress}%</span>
@@ -603,7 +759,7 @@ export default function GestureShotDemo() {
           <div aria-hidden="true" style={{ position: "absolute", left: "50%", bottom: "22%", width: 76, height: 76, transform: "translate(-50%, 50%)", borderRadius: "50%", border: "2px solid rgba(255,189,89,.9)", boxShadow: "0 0 22px rgba(255,189,89,.42)", zIndex: 5, animation: "pulse-glow 1.4s ease-in-out infinite", pointerEvents: "none" }} />
         )}
 
-        {phase === "result" && !matchSummary.completed && (
+        {phase === "result" && !lightningCup && !matchSummary.completed && (
           <section role="status" style={{ position: "absolute", top: "29%", left: "50%", transform: "translateX(-50%)", zIndex: 10, width: "min(82%, 360px)", padding: "15px 18px", textAlign: "center", borderRadius: 19, background: "rgba(3,13,20,.82)", border: `2px solid ${resultCopy.accent}`, boxShadow: `0 0 30px ${resultCopy.accent}44`, backdropFilter: "blur(10px)", pointerEvents: "none" }}>
             <strong style={{ display: "block", color: resultCopy.accent, fontSize: 30, lineHeight: 1 }}>{resultCopy.title}</strong>
             <span style={{ display: "block", marginTop: 6, fontSize: 14 }}>{resultCopy.detail}</span>
@@ -613,7 +769,7 @@ export default function GestureShotDemo() {
           </section>
         )}
 
-        {phase === "result" && matchSummary.completed && (
+        {phase === "result" && !lightningCup && matchSummary.completed && (
           <section data-match-summary="true" role="status" style={{ position: "absolute", top: "27%", left: "50%", transform: "translateX(-50%)", zIndex: 12, width: "min(86%, 380px)", padding: "18px 18px 17px", textAlign: "center", borderRadius: 22, background: "rgba(3,13,20,.94)", border: "2px solid #ffd166", boxShadow: "0 0 38px rgba(255,209,102,.32)", backdropFilter: "blur(12px)", pointerEvents: "none" }}>
             <span style={{ display: "block", color: "#72f2a1", fontSize: 10, fontWeight: 950, letterSpacing: 1.35 }}>PARTIDO {matchMission.matchNumber} COMPLETADO</span>
             <strong style={{ display: "block", marginTop: 5, color: "#ffd166", fontSize: 31, lineHeight: 1 }} aria-label={`${matchSummary.stars} de 3 estrellas`}>{"★".repeat(matchSummary.stars)}<span style={{ color: "rgba(255,255,255,.24)" }}>{"★".repeat(3 - matchSummary.stars)}</span></strong>
@@ -622,6 +778,99 @@ export default function GestureShotDemo() {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 13 }}>
               <span style={{ padding: 9, borderRadius: 12, background: matchSummary.goalBonusReached ? "rgba(114,242,161,.15)" : "rgba(255,255,255,.07)", border: `1px solid ${matchSummary.goalBonusReached ? "#72f2a1" : "rgba(255,255,255,.16)"}`, fontSize: 11, fontWeight: 950 }}>⚽ {matchSummary.goals} GOLES<br /><small>{matchSummary.goalBonusReached ? "BONUS LOGRADO" : `META ${MATCH_GOAL_BONUS}`}</small></span>
               <span style={{ padding: 9, borderRadius: 12, background: matchSummary.mathBonusReached ? "rgba(255,209,102,.15)" : "rgba(255,255,255,.07)", border: `1px solid ${matchSummary.mathBonusReached ? "#ffd166" : "rgba(255,255,255,.16)"}`, fontSize: 11, fontWeight: 950 }}>🎯 {matchSummary.firstTryCorrect} A LA PRIMERA<br /><small>{matchSummary.mathBonusReached ? "BONUS LOGRADO" : `META ${MATCH_MATH_BONUS}`}</small></span>
+            </div>
+          </section>
+        )}
+
+        {phase === "result" && lightningCup && lightningCup.status === "playing" && (
+          <section data-lightning-turn-result="true" role="status" style={{ position: "absolute", top: "28%", left: "50%", transform: "translateX(-50%)", zIndex: 12, width: "min(86%, 380px)", padding: "17px 18px", textAlign: "center", borderRadius: 22, background: "rgba(3,13,20,.94)", border: `2px solid ${resultCopy.accent}`, boxShadow: `0 0 34px ${resultCopy.accent}44`, backdropFilter: "blur(12px)", pointerEvents: "none" }}>
+            <span style={{ display: "block", color: activeLightningPlayer?.color ?? "#ffd166", fontSize: 10, fontWeight: 950, letterSpacing: 1.25 }}>TURNO DE {lightningCup.players[(lightningCup.activePlayerIndex - 1 + lightningCup.players.length) % lightningCup.players.length]?.name.toUpperCase()}</span>
+            <strong style={{ display: "block", marginTop: 6, color: resultCopy.accent, fontSize: 30, lineHeight: 1 }}>{resultCopy.title}</strong>
+            <span style={{ display: "block", marginTop: 7, fontSize: 13 }}>{resultCopy.detail}</span>
+            <span style={{ display: "block", marginTop: 10, color: "#ffe5a3", fontSize: 12, fontWeight: 950 }}>SIGUE: {activeLightningPlayer?.name.toUpperCase()}</span>
+          </section>
+        )}
+
+        {phase === "result" && lightningCup && lightningCup.status === "completed" && (
+          <section data-lightning-podium="true" role="status" style={{ position: "absolute", top: "25%", left: "50%", transform: "translateX(-50%)", zIndex: 13, width: "min(89%, 400px)", padding: "18px", textAlign: "center", borderRadius: 23, background: "rgba(3,13,20,.96)", border: "2px solid #ffd166", boxShadow: "0 0 42px rgba(255,209,102,.34)", backdropFilter: "blur(12px)", pointerEvents: "auto" }}>
+            <span style={{ display: "block", color: "#72f2a1", fontSize: 10, fontWeight: 950, letterSpacing: 1.35 }}>COPA RELÁMPAGO COMPLETADA</span>
+            <strong style={{ display: "block", marginTop: 5, color: "#ffd166", fontSize: 26, lineHeight: 1.1 }}>🏆 PODIO DEL EQUIPO</strong>
+            <div style={{ display: "grid", gap: 7, marginTop: 13 }}>
+              {lightningStandings.map((standing) => (
+                <div key={standing.player.id} style={{ display: "grid", gridTemplateColumns: "34px 1fr auto", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 13, background: standing.rank === 1 ? "rgba(255,209,102,.16)" : "rgba(255,255,255,.07)", border: `1px solid ${standing.rank === 1 ? "#ffd166" : "rgba(255,255,255,.16)"}`, textAlign: "left" }}>
+                  <span style={{ fontSize: 18, fontWeight: 950 }}>{standing.rank === 1 ? "🥇" : standing.rank === 2 ? "🥈" : standing.rank === 3 ? "🥉" : "4"}</span>
+                  <span style={{ color: standing.player.color, fontSize: 12, fontWeight: 950 }}>{standing.player.name}<small style={{ display: "block", marginTop: 2, color: "#c8d8d0", fontSize: 9 }}>⚽ {standing.goals} · 🎯 {standing.firstTryCorrect}</small></span>
+                  <strong style={{ color: "white", fontSize: 14 }}>{standing.score} pts</strong>
+                </div>
+              ))}
+            </div>
+            <button onClick={copyLightningResult} style={{ width: "100%", minHeight: 40, marginTop: 11, borderRadius: 12, border: "1px solid rgba(255,255,255,.3)", background: "rgba(104,199,255,.16)", color: "#bfe6ff", fontSize: 11, fontWeight: 950 }}>COMPARTIR RESULTADO</button>
+            {shareUrl && <p aria-live="polite" style={{ margin: "8px 0 0", color: "#d7e8df", fontSize: 10, overflowWrap: "anywhere" }}>{shareUrl}</p>}
+          </section>
+        )}
+
+        {socialOpen && (
+          <section data-lightning-lobby="true" role="dialog" aria-modal="true" aria-labelledby="lightning-title" style={{ position: "absolute", inset: 0, zIndex: 30, display: "grid", alignContent: "center", padding: "max(20px, env(safe-area-inset-top, 20px)) 16px max(20px, env(safe-area-inset-bottom, 20px))", background: "linear-gradient(180deg, rgba(2,8,17,.92), rgba(3,18,24,.97))", backdropFilter: "blur(14px)", pointerEvents: "auto", overflowY: "auto" }}>
+            <div style={{ width: "100%", maxWidth: 430, margin: "0 auto", padding: "19px", borderRadius: 25, border: "2px solid rgba(255,209,102,.72)", background: "rgba(7,29,35,.96)", boxShadow: "0 20px 70px rgba(0,0,0,.48)" }}>
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+                <div>
+                  <span style={{ color: "#72f2a1", fontSize: 10, fontWeight: 950, letterSpacing: 1.3 }}>FASE 10 · JUEGO SOCIAL SEGURO</span>
+                  <h2 id="lightning-title" style={{ margin: "4px 0 0", color: "#ffd166", fontSize: 27, lineHeight: 1 }}>⚡ Copa relámpago</h2>
+                </div>
+                <button type="button" onClick={() => setSocialOpen(false)} aria-label="Cerrar juegos con amigos" style={{ width: 40, height: 40, flex: "0 0 auto", borderRadius: 12, border: "1px solid rgba(255,255,255,.3)", background: "rgba(255,255,255,.08)", color: "white", fontSize: 22, fontWeight: 950 }}>×</button>
+              </div>
+
+              {lightningCup ? (
+                <div style={{ marginTop: 16 }}>
+                  <p style={{ margin: "0 0 12px", color: "#d4e3dc", fontSize: 12, lineHeight: 1.45 }}>Copa {lightningCup.seed} · {lightningCup.players.length} jugador{lightningCup.players.length === 1 ? "" : "es"} · tres remates por persona.</p>
+                  <div style={{ display: "grid", gap: 7 }}>
+                    {lightningStandings.map((standing) => (
+                      <div key={standing.player.id} style={{ display: "grid", gridTemplateColumns: "28px 1fr auto", alignItems: "center", gap: 8, padding: "9px 10px", borderRadius: 13, background: "rgba(255,255,255,.07)", border: `1px solid ${standing.player.id === activeLightningPlayer?.id && lightningCup.status === "playing" ? standing.player.color : "rgba(255,255,255,.14)"}` }}>
+                        <span style={{ fontWeight: 950 }}>{standing.rank}</span>
+                        <span style={{ color: standing.player.color, fontSize: 12, fontWeight: 950 }}>{standing.player.name}</span>
+                        <span style={{ fontSize: 11, fontWeight: 950 }}>{standing.score} pts</span>
+                      </div>
+                    ))}
+                  </div>
+                  <button type="button" onClick={() => setSocialOpen(false)} style={{ width: "100%", minHeight: 48, marginTop: 13, borderRadius: 14, border: "2px solid rgba(255,255,255,.35)", background: "linear-gradient(180deg, #ff7a3d, #dd451f)", color: "white", fontSize: 15, fontWeight: 950 }}>{lightningCup.status === "completed" ? "VOLVER AL PODIO" : `CONTINUAR TURNO DE ${activeLightningPlayer?.name.toUpperCase()}`}</button>
+                  <button type="button" onClick={abandonLightningCup} style={{ width: "100%", minHeight: 39, marginTop: 8, borderRadius: 12, border: "1px solid rgba(255,139,139,.4)", background: "rgba(255,90,90,.08)", color: "#ffc1c1", fontSize: 11, fontWeight: 900 }}>ABANDONAR ESTA COPA</button>
+                </div>
+              ) : invitation ? (
+                <div style={{ marginTop: 17 }}>
+                  <div style={{ padding: "13px", borderRadius: 16, background: "rgba(104,199,255,.1)", border: "1px solid rgba(104,199,255,.42)", textAlign: "center" }}>
+                    <span style={{ display: "block", color: "#bfe7ff", fontSize: 10, fontWeight: 950 }}>TE INVITARON AL RETO</span>
+                    <strong style={{ display: "block", marginTop: 4, color: "white", fontSize: 24, letterSpacing: 3 }}>{invitation.seed}</strong>
+                    <small style={{ color: "#c8d9e2" }}>Tres preguntas y tres remates · mismas condiciones para todos</small>
+                  </div>
+                  <label style={{ display: "grid", gap: 5, marginTop: 13, color: "#dce8e2", fontSize: 11, fontWeight: 900 }}>
+                    Tu nombre o apodo
+                    <input value={playerNames[0] ?? ""} onChange={(event) => updatePlayerName(0, event.target.value)} maxLength={14} autoComplete="off" style={{ minHeight: 44, borderRadius: 12, border: "1px solid rgba(255,255,255,.28)", background: "rgba(255,255,255,.08)", color: "white", padding: "0 12px", fontSize: 15, fontWeight: 900, outline: "none" }} />
+                  </label>
+                  <button type="button" onClick={() => startLightningCup([playerNames[0] || "Jugador"], invitation.seed)} style={{ width: "100%", minHeight: 51, marginTop: 13, borderRadius: 15, border: "2px solid rgba(255,255,255,.38)", background: "linear-gradient(180deg, #32bd68, #168746)", color: "white", fontSize: 16, fontWeight: 950, boxShadow: "0 5px 0 #0b5630" }}>ACEPTAR RETO</button>
+                </div>
+              ) : (
+                <div style={{ marginTop: 15 }}>
+                  <p style={{ margin: "0 0 12px", color: "#d4e3dc", fontSize: 12, lineHeight: 1.45 }}>Todos reciben la misma multiplicación en cada ronda. Ganan los goles, la precisión matemática y un pequeño bono por agilidad.</p>
+                  <div role="group" aria-label="Cantidad de jugadores" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 7 }}>
+                    {[2, 3, 4].map((count) => (
+                      <button key={count} type="button" aria-pressed={playerNames.length === count} onClick={() => changePlayerCount(count)} style={{ minHeight: 39, borderRadius: 12, border: playerNames.length === count ? "2px solid #72f2a1" : "1px solid rgba(255,255,255,.22)", background: playerNames.length === count ? "rgba(114,242,161,.14)" : "rgba(255,255,255,.06)", color: "white", fontSize: 12, fontWeight: 950 }}>{count} JUGADORES</button>
+                    ))}
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: playerNames.length > 2 ? "1fr 1fr" : "1fr", gap: 7, marginTop: 10 }}>
+                    {playerNames.map((name, index) => (
+                      <label key={index} style={{ display: "grid", gap: 4, color: "#cfe0d8", fontSize: 9, fontWeight: 900 }}>
+                        JUGADOR {index + 1}
+                        <input aria-label={`Nombre del jugador ${index + 1}`} value={name} onChange={(event) => updatePlayerName(index, event.target.value)} maxLength={14} autoComplete="off" style={{ minHeight: 41, borderRadius: 11, border: `1px solid ${["#72f2a1", "#ffd166", "#68c7ff", "#c89bff"][index]}`, background: "rgba(255,255,255,.07)", color: "white", padding: "0 10px", fontSize: 13, fontWeight: 900, outline: "none" }} />
+                      </label>
+                    ))}
+                  </div>
+                  <button type="button" onClick={() => startLightningCup(playerNames)} style={{ width: "100%", minHeight: 51, marginTop: 13, borderRadius: 15, border: "2px solid rgba(255,255,255,.38)", background: "linear-gradient(180deg, #ff7a3d, #dd451f)", color: "white", fontSize: 16, fontWeight: 950, boxShadow: "0 5px 0 #972c16" }}>INICIAR COPA POR TURNOS</button>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: 8, margin: "13px 0", color: "#91a69c", fontSize: 9, fontWeight: 900 }}><span style={{ height: 1, background: "rgba(255,255,255,.15)" }} /><span>O JUEGUEN A DISTANCIA</span><span style={{ height: 1, background: "rgba(255,255,255,.15)" }} /></div>
+                  <button type="button" onClick={createSharedChallenge} style={{ width: "100%", minHeight: 44, borderRadius: 13, border: "1px solid rgba(104,199,255,.5)", background: "rgba(104,199,255,.12)", color: "#bfe7ff", fontSize: 13, fontWeight: 950 }}>🔗 CREAR RETO POR ENLACE</button>
+                  {shareUrl && <p aria-live="polite" style={{ margin: "9px 0 0", padding: 9, borderRadius: 10, background: "rgba(0,0,0,.22)", color: "#d7e8df", fontSize: 10, overflowWrap: "anywhere" }}>Enlace copiado: {shareUrl}</p>}
+                  <p style={{ margin: "11px 2px 0", color: "#9fb3aa", fontSize: 9, lineHeight: 1.4, textAlign: "center" }}>Sin chat, cuentas ni apellidos. Usa solo nombres o apodos acordados con un adulto.</p>
+                </div>
+              )}
             </div>
           </section>
         )}
@@ -637,7 +886,11 @@ export default function GestureShotDemo() {
             </div>
           </div>
           {phase === "result" ? (
-            <button onClick={matchSummary.completed ? startRematch : nextChallenge} style={{ minHeight: 56, borderRadius: 17, border: "3px solid rgba(255,255,255,.4)", background: matchSummary.completed ? "linear-gradient(180deg, #32bd68, #168746)" : "linear-gradient(180deg, #ff7a3d, #e64921)", color: "white", fontSize: 19, fontWeight: 950, boxShadow: matchSummary.completed ? "0 6px 0 #0b5630" : "0 6px 0 #9e2d17", pointerEvents: "auto" }}>{matchSummary.completed ? "JUGAR REVANCHA" : "SIGUIENTE RETO"}</button>
+            lightningCup ? (
+              <button onClick={lightningCup.status === "completed" ? abandonLightningCup : continueLightningCup} style={{ minHeight: 56, borderRadius: 17, border: "3px solid rgba(255,255,255,.4)", background: lightningCup.status === "completed" ? "linear-gradient(180deg, #32bd68, #168746)" : "linear-gradient(180deg, #ff7a3d, #e64921)", color: "white", fontSize: 18, fontWeight: 950, boxShadow: lightningCup.status === "completed" ? "0 6px 0 #0b5630" : "0 6px 0 #9e2d17", pointerEvents: "auto" }}>{lightningCup.status === "completed" ? "NUEVA COPA" : `SIGUE ${activeLightningPlayer?.name.toUpperCase()}`}</button>
+            ) : (
+              <button onClick={matchSummary.completed ? startRematch : nextChallenge} style={{ minHeight: 56, borderRadius: 17, border: "3px solid rgba(255,255,255,.4)", background: matchSummary.completed ? "linear-gradient(180deg, #32bd68, #168746)" : "linear-gradient(180deg, #ff7a3d, #e64921)", color: "white", fontSize: 19, fontWeight: 950, boxShadow: matchSummary.completed ? "0 6px 0 #0b5630" : "0 6px 0 #9e2d17", pointerEvents: "auto" }}>{matchSummary.completed ? "JUGAR REVANCHA" : "SIGUIENTE RETO"}</button>
+            )
           ) : (
             <p style={{ margin: 0, textAlign: "center", color: "rgba(225,238,230,.78)", fontSize: 11, fontWeight: 800 }}>
               {phase === "ready" ? mathSolved ? "Precisión matemática lista · ahora manda tu gesto" : "Primero calcula · luego remata" : spinApplied ? "El efecto ya fue aplicado" : "Un segundo gesto lateral curva la pelota"}
