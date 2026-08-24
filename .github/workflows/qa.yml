@@ -4,7 +4,7 @@ on:
   push:
     branches: [main, "codex/**"]
   pull_request:
-    branches: [main]
+    branches: [main, "codex/**"]
 
 jobs:
   test:
@@ -36,6 +36,12 @@ jobs:
 
       - name: Mobile E2E, accessibility and performance smoke test
         run: pnpm test:e2e
+
+      - name: Functional E2E game flow
+        run: pnpm test:e2e:functional
+
+      - name: V10 adaptive multiplication E2E
+        run: pnpm test:e2e:v10
 
       - name: Upload coverage summary
         if: always()

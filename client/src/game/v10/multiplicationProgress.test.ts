@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   ADVANCED_UNLOCK_FALLBACK_ROUNDS,
   ADVANCED_UNLOCK_MIN_ROUNDS,
+  V10_MULTIPLICATION_PROGRESS_LEGACY_KEY,
   V10_MULTIPLICATION_PROGRESS_KEY,
   createDefaultMultiplicationProgress,
   getAdvancedUnlockProgress,
@@ -12,16 +13,17 @@ import {
   recordCompletedMultiplicationRound,
   saveMultiplicationProgress,
   shouldUnlockAdvanced,
-  type MultiplicationProgressV1,
+  type MultiplicationProgressV2,
   type StorageLike,
 } from "./multiplicationProgress";
 
-function recordStarter(progress: MultiplicationProgressV1, firstTry: boolean, index: number) {
+function recordStarter(progress: MultiplicationProgressV2, firstTry: boolean, index: number) {
   return recordCompletedMultiplicationRound(progress, {
     track: "tables-2-5",
     firstTry,
     scored: index % 2 === 0,
     completedAt: `2026-08-24T00:00:0${index}.000Z`,
+    factors: { a: 2 + (index % 4), b: 3 },
   });
 }
 
@@ -30,7 +32,9 @@ describe("V10 multiplication progress", () => {
     const progress = createDefaultMultiplicationProgress();
     expect(progress.activeTrack).toBe("tables-2-5");
     expect(progress.advancedUnlocked).toBe(false);
+    expect(progress.version).toBe(2);
     expect(progress.tracks["tables-2-5"].mastery).toBe("discovering");
+    expect(progress.tracks["tables-2-5"].facts).toEqual({});
   });
 
   it("records first-try, assisted and football outcomes independently", () => {
@@ -43,6 +47,8 @@ describe("V10 multiplication progress", () => {
       goals: 1,
       recentFirstTry: [true, false],
     });
+    expect(second.tracks["tables-2-5"].facts["2x3"]).toMatchObject({ attempts: 1, firstTryCorrect: 1 });
+    expect(second.tracks["tables-2-5"].facts["3x3"]).toMatchObject({ attempts: 1, assistedCorrect: 1 });
   });
 
   it("unlocks tables 6–9 after five rounds with at least 60% first-try accuracy", () => {
@@ -86,7 +92,7 @@ describe("V10 multiplication progress", () => {
     expect(normalized.tracks["tables-2-5"]).toMatchObject({ roundsCompleted: 2, firstTryCorrect: 2, assistedCorrect: 0, goals: 2, recentFirstTry: [true] });
   });
 
-  it("saves and loads the normalized versioned profile", () => {
+  it("saves and loads the normalized V2 profile", () => {
     const values = new Map<string, string>();
     const storage: StorageLike = {
       getItem: (key) => values.get(key) ?? null,
@@ -96,6 +102,37 @@ describe("V10 multiplication progress", () => {
     expect(saveMultiplicationProgress(storage, progress)).toBe(true);
     expect(values.has(V10_MULTIPLICATION_PROGRESS_KEY)).toBe(true);
     expect(loadMultiplicationProgress(storage)).toEqual(progress);
+  });
+
+  it("migrates a V1 profile without losing aggregate mastery", () => {
+    const values = new Map<string, string>();
+    values.set(V10_MULTIPLICATION_PROGRESS_LEGACY_KEY, JSON.stringify({
+      version: 1,
+      activeTrack: "tables-2-5",
+      tracks: {
+        "tables-2-5": { roundsCompleted: 4, firstTryCorrect: 3, assistedCorrect: 1, goals: 2, recentFirstTry: [true, true, true, false] },
+      },
+    }));
+    const storage: StorageLike = {
+      getItem: (key) => values.get(key) ?? null,
+      setItem: (key, value) => { values.set(key, value); },
+    };
+    const migrated = loadMultiplicationProgress(storage);
+    expect(migrated.version).toBe(2);
+    expect(migrated.tracks["tables-2-5"]).toMatchObject({ roundsCompleted: 4, firstTryCorrect: 3, assistedCorrect: 1 });
+    expect(migrated.tracks["tables-2-5"].facts).toEqual({});
+  });
+
+  it("recovers a valid V1 profile when the newer payload is malformed", () => {
+    const values = new Map<string, string>([
+      [V10_MULTIPLICATION_PROGRESS_KEY, "{"],
+      [V10_MULTIPLICATION_PROGRESS_LEGACY_KEY, JSON.stringify({ version: 1, tracks: { "tables-2-5": { roundsCompleted: 2, firstTryCorrect: 1 } } })],
+    ]);
+    const storage: StorageLike = {
+      getItem: (key) => values.get(key) ?? null,
+      setItem: (key, value) => { values.set(key, value); },
+    };
+    expect(loadMultiplicationProgress(storage).tracks["tables-2-5"]).toMatchObject({ roundsCompleted: 2, firstTryCorrect: 1 });
   });
 
   it("falls back safely when storage is absent, malformed or unavailable", () => {
@@ -115,5 +152,25 @@ describe("V10 multiplication progress", () => {
     const track = { roundsCompleted: 2, recentFirstTry: [true, false] };
     expect(getAdvancedUnlockProgress(track)).toBeGreaterThan(0);
     expect(getAdvancedUnlockProgress(track)).toBeLessThan(100);
+  });
+
+  it("rejects malformed and out-of-range fact histories", () => {
+    const normalized = normalizeMultiplicationProgress({
+      tracks: {
+        "tables-2-5": {
+          roundsCompleted: 3,
+          facts: {
+            "2x5": { attempts: 2, firstTryCorrect: 99, assistedCorrect: 99, recentFirstTry: [true, "bad", false], lastPlayedRound: -3 },
+            "9x9": { attempts: 9 },
+            bad: { attempts: 9 },
+          },
+          lastFactKey: "9x9",
+        },
+      },
+    });
+    expect(normalized.tracks["tables-2-5"].facts).toEqual({
+      "2x5": { attempts: 2, firstTryCorrect: 2, assistedCorrect: 0, recentFirstTry: [true, false], lastPlayedRound: 0 },
+    });
+    expect(normalized.tracks["tables-2-5"].lastFactKey).toBe("");
   });
 });
