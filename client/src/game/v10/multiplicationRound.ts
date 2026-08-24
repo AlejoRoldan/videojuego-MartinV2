@@ -53,6 +53,30 @@ function createOptions(answer: number, a: number, b: number, sequenceIndex: numb
   return rotate(unique, sequenceIndex % unique.length);
 }
 
+/** Builds a challenge for an exact fact while keeping distractors deterministic. */
+export function createMultiplicationChallengeForFactors(
+  a: number,
+  b: number,
+  sequenceIndex: number,
+  track: MultiplicationTrack,
+): MultiplicationChallengeV10 {
+  const safeIndex = Number.isFinite(sequenceIndex) ? Math.max(0, Math.trunc(sequenceIndex)) : 0;
+  const range = MULTIPLICATION_TRACKS[track];
+  const safeA = Number.isFinite(a) ? Math.min(range.maximum, Math.max(range.minimum, Math.trunc(a))) : range.minimum;
+  const safeB = Number.isFinite(b) ? Math.min(range.maximum, Math.max(range.minimum, Math.trunc(b))) : range.minimum;
+  const answer = safeA * safeB;
+  return {
+    id: `${track}-${safeA}x${safeB}-${safeIndex}`,
+    track,
+    sequenceIndex: safeIndex,
+    a: safeA,
+    b: safeB,
+    answer,
+    options: createOptions(answer, safeA, safeB, safeIndex),
+    question: `${safeA} × ${safeB} = ?`,
+  };
+}
+
 /** Produces a repeatable 16-challenge cycle for each table track. */
 export function createMultiplicationChallenge(
   sequenceIndex: number,
@@ -64,17 +88,7 @@ export function createMultiplicationChallenge(
   const cycleIndex = safeIndex % (span * span);
   const a = range.minimum + cycleIndex % span;
   const b = range.minimum + (Math.floor(cycleIndex / span) + cycleIndex * 2 + 1) % span;
-  const answer = a * b;
-  return {
-    id: `${track}-${safeIndex}`,
-    track,
-    sequenceIndex: safeIndex,
-    a,
-    b,
-    answer,
-    options: createOptions(answer, a, b, safeIndex),
-    question: `${a} × ${b} = ?`,
-  };
+  return createMultiplicationChallengeForFactors(a, b, safeIndex, track);
 }
 
 function repeatedAddition(challenge: MultiplicationChallengeV10): string {

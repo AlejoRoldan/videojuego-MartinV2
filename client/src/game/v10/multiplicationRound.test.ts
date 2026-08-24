@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   MULTIPLICATION_TRACKS,
   createMultiplicationChallenge,
+  createMultiplicationChallengeForFactors,
   evaluateMultiplicationAnswer,
 } from "./multiplicationRound";
 
@@ -58,5 +59,10 @@ describe("V10 multiplication round", () => {
     const challenge = createMultiplicationChallenge(Number.NaN, "tables-2-5");
     expect(challenge.sequenceIndex).toBe(0);
     expect(evaluateMultiplicationAnswer(challenge, challenge.answer, Number.NaN).firstTry).toBe(true);
+  });
+
+  it("creates an exact adaptive fact and clamps it to the selected track", () => {
+    expect(createMultiplicationChallengeForFactors(4, 5, 7, "tables-2-5")).toMatchObject({ a: 4, b: 5, answer: 20, question: "4 × 5 = ?" });
+    expect(createMultiplicationChallengeForFactors(99, -1, 0, "tables-2-5")).toMatchObject({ a: 5, b: 2, answer: 10 });
   });
 });

@@ -7,18 +7,18 @@ import {
   type ResolvedFootballShot,
 } from "./footballCollisions";
 import { continueFlightWithSpin, createInteractiveShotConfig } from "./midFlightSpin";
+import { selectAdaptiveMultiplicationChallenge, type AdaptivePracticeMode } from "./adaptiveMultiplication";
 import {
   createDefaultMultiplicationProgress,
   getAdvancedUnlockProgress,
   loadMultiplicationProgress,
   recordCompletedMultiplicationRound,
   saveMultiplicationProgress,
-  type MultiplicationProgressV1,
+  type MultiplicationProgressV2,
   type TrackMasteryLevel,
 } from "./multiplicationProgress";
 import {
   MULTIPLICATION_TRACKS,
-  createMultiplicationChallenge,
   evaluateMultiplicationAnswer,
   type MultiplicationTrack,
 } from "./multiplicationRound";
@@ -43,6 +43,13 @@ const MASTERY_LABELS: Record<TrackMasteryLevel, string> = {
   practicing: "Practicando",
   mastering: "Dominando",
   mastered: "Dominada",
+};
+
+const ADAPTIVE_MODE_LABELS: Record<AdaptivePracticeMode, string> = {
+  explore: "Explorando",
+  reinforce: "Reforzando",
+  balance: "Equilibrando",
+  challenge: "Desafío",
 };
 
 function getBrowserStorage(): Storage | null {
@@ -86,10 +93,14 @@ export default function GestureShotDemo() {
   const initialResolved = useMemo(() => resolveFootballShot(initialPhysicsResult, "open", DEFAULT_CONFIG.goal), [initialPhysicsResult]);
   const [resolvedShot, setResolvedShot] = useState<ResolvedFootballShot>(initialResolved);
   const [defenseMode, setDefenseMode] = useState<DefenseMode>("open");
-  const [savedProgress, setSavedProgress] = useState<MultiplicationProgressV1>(() => createDefaultMultiplicationProgress());
+  const [savedProgress, setSavedProgress] = useState<MultiplicationProgressV2>(() => createDefaultMultiplicationProgress());
   const [tableTrack, setTableTrack] = useState<MultiplicationTrack>("tables-2-5");
   const [challengeIndex, setChallengeIndex] = useState(0);
-  const challenge = useMemo(() => createMultiplicationChallenge(challengeIndex, tableTrack), [challengeIndex, tableTrack]);
+  const adaptiveSelection = useMemo(
+    () => selectAdaptiveMultiplicationChallenge(savedProgress, tableTrack),
+    [savedProgress, tableTrack],
+  );
+  const challenge = adaptiveSelection.challenge;
   const [mathSolved, setMathSolved] = useState(false);
   const [mathAttempts, setMathAttempts] = useState(0);
   const [mathFeedback, setMathFeedback] = useState("Resuelve para habilitar el remate");
@@ -140,6 +151,7 @@ export default function GestureShotDemo() {
         firstTry: roundFirstTry === true,
         scored: resolvedRef.current.outcome === "goal",
         completedAt: new Date().toISOString(),
+        factors: { a: challenge.a, b: challenge.b },
       });
       setSavedProgress(recorded.progress);
       saveMultiplicationProgress(getBrowserStorage(), recorded.progress);
@@ -390,8 +402,8 @@ export default function GestureShotDemo() {
 
         <header style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 10, padding: "max(14px, env(safe-area-inset-top, 14px)) 16px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, pointerEvents: "none" }}>
           <div>
-            <div style={{ color: "#ffd166", fontSize: 11, fontWeight: 950, letterSpacing: 1.25 }}>CAMINO AL 10 · FASE 6</div>
-            <h1 style={{ margin: "2px 0 0", fontSize: "clamp(22px, 6vw, 30px)", lineHeight: 1, textShadow: "0 2px 10px #000" }}>Domina y avanza</h1>
+            <div style={{ color: "#ffd166", fontSize: 11, fontWeight: 950, letterSpacing: 1.25 }}>CAMINO AL 10 · FASE 7</div>
+            <h1 style={{ margin: "2px 0 0", fontSize: "clamp(22px, 6vw, 30px)", lineHeight: 1, textShadow: "0 2px 10px #000" }}>Mejora con cada tiro</h1>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
             <span style={{ padding: "7px 10px", borderRadius: 999, background: "rgba(4,15,25,.62)", border: "1px solid rgba(255,255,255,.3)", fontSize: 12, fontWeight: 900, backdropFilter: "blur(7px)" }}>Reto {challengeIndex % 5 + 1}/5</span>
@@ -432,8 +444,13 @@ export default function GestureShotDemo() {
         {phase === "ready" && !mathSolved && (
           <section data-v10-multiplication-challenge="true" aria-labelledby="multiplication-question" style={{ position: "absolute", top: "28.5%", left: 14, right: 14, zIndex: 12, padding: "13px 14px 14px", borderRadius: 20, background: "rgba(3,13,22,.9)", border: "2px solid rgba(114,242,161,.62)", boxShadow: "0 12px 34px rgba(0,0,0,.34)", backdropFilter: "blur(12px)", pointerEvents: "auto" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 9 }}>
-              <span style={{ color: "#72f2a1", fontSize: 10, fontWeight: 950, letterSpacing: 1.1 }}>ACADEMIA DE TABLAS</span>
+              <span style={{ color: "#72f2a1", fontSize: 10, fontWeight: 950, letterSpacing: 1.1 }}>ACADEMIA DE TABLAS · ADAPTATIVA</span>
               <span style={{ color: "#d6e7df", fontSize: 10, fontWeight: 900 }}>{MASTERY_LABELS[currentTrackProgress.mastery]} · {currentTrackProgress.roundsCompleted} retos</span>
+            </div>
+            <div aria-label={`Modo adaptativo: ${ADAPTIVE_MODE_LABELS[adaptiveSelection.mode]}`} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, margin: "-2px 0 9px", color: "#ffe4a1", fontSize: 10, fontWeight: 900 }}>
+              <span>⚡ {ADAPTIVE_MODE_LABELS[adaptiveSelection.mode]}</span>
+              <span aria-hidden="true">·</span>
+              <span>{adaptiveSelection.message}</span>
             </div>
             <div role="group" aria-label="Rango de tablas" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5, marginBottom: 10 }}>
               {(Object.keys(MULTIPLICATION_TRACKS) as MultiplicationTrack[]).map((track) => {
