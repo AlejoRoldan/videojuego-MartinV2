@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { sounds } from "../engine/soundSystem";
 import StadiumCanvas from "./StadiumCanvas";
 import {
   resolveFootballShot,
@@ -36,6 +37,13 @@ import {
 } from "./multiplicationRound";
 import { curveFromSwipe, getForceBand, launchFromSwipe, type GesturePoint, type LaunchGesture } from "./shotGesture";
 import { simulateShot, type ShotPhysicsConfig, type ShotPhysicsResult } from "./shotPhysics3d";
+import {
+  getStadiumFeedback,
+  loadSoundPreference,
+  saveSoundPreference,
+  type StadiumAudioCue,
+  type StadiumFeedback,
+} from "./stadiumAtmosphere";
 
 type DemoPhase = "ready" | "flight" | "result";
 
@@ -49,6 +57,11 @@ interface DragState {
 
 const GOAL_DISTANCE_M = 18.3;
 const DEFAULT_CONFIG = createInteractiveShotConfig(24, 17, 0, GOAL_DISTANCE_M);
+const CELEBRATION_PIECES = Array.from({ length: 14 }, (_, index) => ({
+  left: `${5 + ((index * 31) % 90)}%`,
+  delay: `${(index % 5) * 70}ms`,
+  color: ["#ffd166", "#72f2a1", "#ff7a3d", "#68c7ff"][index % 4],
+}));
 
 const MASTERY_LABELS: Record<TrackMasteryLevel, string> = {
   discovering: "Descubriendo",
@@ -100,6 +113,16 @@ function localPoint(event: ReactPointerEvent<HTMLDivElement>): GesturePoint {
   return { x: event.clientX - bounds.left, y: event.clientY - bounds.top, timeMs: performance.now() };
 }
 
+function playStadiumCue(cue: StadiumAudioCue, enabled: boolean) {
+  if (!enabled) return;
+  if (cue === "goal") sounds.goal();
+  else if (cue === "save") sounds.save();
+  else if (cue === "wall") sounds.wall();
+  else if (cue === "unlock") sounds.unlock();
+  else if (cue === "missionComplete") sounds.missionComplete();
+  else sounds.miss();
+}
+
 export default function GestureShotDemo() {
   const initialPhysicsResult = useMemo(() => simulateShot(DEFAULT_CONFIG), []);
   const initialResolved = useMemo(() => resolveFootballShot(initialPhysicsResult, "open", DEFAULT_CONFIG.goal), [initialPhysicsResult]);
@@ -107,6 +130,8 @@ export default function GestureShotDemo() {
   const [defenseMode, setDefenseMode] = useState<DefenseMode>("open");
   const [savedProgress, setSavedProgress] = useState<MultiplicationProgressV2>(() => createDefaultMultiplicationProgress());
   const [matchMission, setMatchMission] = useState<MatchMissionV1>(() => createMatchMission());
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [stadiumFeedback, setStadiumFeedback] = useState<StadiumFeedback | null>(null);
   const [tableTrack, setTableTrack] = useState<MultiplicationTrack>("tables-2-5");
   const adaptiveSelection = useMemo(
     () => selectAdaptiveMultiplicationChallenge(savedProgress, tableTrack),
@@ -130,6 +155,7 @@ export default function GestureShotDemo() {
   const physicsResultRef = useRef<ShotPhysicsResult>(initialPhysicsResult);
   const resolvedRef = useRef<ResolvedFootballShot>(initialResolved);
   const configRef = useRef<ShotPhysicsConfig>(DEFAULT_CONFIG);
+  const soundEnabledRef = useRef(true);
   const elapsedPhysicsSecondsRef = useRef(0);
   const lastFrameMsRef = useRef(0);
 
@@ -151,6 +177,9 @@ export default function GestureShotDemo() {
       : loadedMission;
     setMatchMission(resumableMission);
     if (resumableMission !== loadedMission) saveMatchMission(storage, resumableMission);
+    const loadedSoundPreference = loadSoundPreference(storage);
+    soundEnabledRef.current = loadedSoundPreference;
+    setSoundEnabled(loadedSoundPreference);
   }, []);
 
   const animate = (now: number) => {
@@ -179,6 +208,12 @@ export default function GestureShotDemo() {
       });
       setMatchMission(updatedMission);
       saveMatchMission(getBrowserStorage(), updatedMission);
+      const feedback = getStadiumFeedback(resolvedRef.current.outcome, {
+        matchCompleted: getMatchMissionSummary(updatedMission).completed,
+        advancedUnlocked: recorded.justUnlockedAdvanced,
+      });
+      setStadiumFeedback(feedback);
+      playStadiumCue(feedback.audioCue, soundEnabledRef.current);
       setJustUnlockedAdvanced(recorded.justUnlockedAdvanced);
       setPhase("result");
       setHint(recorded.justUnlockedAdvanced ? "¡Tablas 6–9 desbloqueadas por tu progreso!" : "Observa el resultado de tu gesto");
@@ -197,7 +232,13 @@ export default function GestureShotDemo() {
     setSpinApplied(null);
     setProgress(0);
     setPhase("flight");
+    setStadiumFeedback(null);
     setHint("¡Ahora desliza a un lado para darle efecto!");
+    if (soundEnabled) {
+      sounds.init();
+      sounds.kick();
+      sounds.whoosh();
+    }
     lastFrameMsRef.current = performance.now();
     frameRef.current = requestAnimationFrame(animate);
   };
@@ -233,9 +274,11 @@ export default function GestureShotDemo() {
     setDrag(null);
     setLaunch(null);
     setSpinApplied(null);
+    setStadiumFeedback(null);
   };
 
   const nextChallenge = () => {
+    if (soundEnabled) sounds.click();
     restorePhysicalPreview(defenseMode);
     setMathSolved(false);
     setMathAttempts(0);
@@ -255,6 +298,19 @@ export default function GestureShotDemo() {
     setFirstTryStreak(0);
     nextChallenge();
     setHint("Nueva misión: completa cinco remates y busca las dos bonificaciones");
+  };
+
+  const toggleSound = () => {
+    const nextEnabled = !soundEnabled;
+    if (nextEnabled) {
+      sounds.init();
+      sounds.click();
+    } else {
+      sounds.click();
+    }
+    soundEnabledRef.current = nextEnabled;
+    setSoundEnabled(nextEnabled);
+    saveSoundPreference(getBrowserStorage(), nextEnabled);
   };
 
   const selectTableTrack = (track: MultiplicationTrack) => {
@@ -285,11 +341,13 @@ export default function GestureShotDemo() {
     setMathAttempts(evaluation.nextAttempt);
     setMathFeedback(evaluation.feedback);
     if (evaluation.correct) {
+      if (soundEnabled) sounds.correct();
       setMathSolved(true);
       setRoundFirstTry(evaluation.firstTry);
       setFirstTryStreak((current) => evaluation.firstTry ? current + 1 : 0);
       setHint(`${challenge.a} × ${challenge.b} = ${challenge.answer} · 🎯 Precisión lista`);
     } else {
+      if (soundEnabled) sounds.wrong();
       setFirstTryStreak(0);
       setHint("Casi: usa la ayuda y vuelve a intentarlo");
     }
@@ -297,6 +355,7 @@ export default function GestureShotDemo() {
 
   const selectDefense = (mode: DefenseMode) => {
     if (phase !== "ready") return;
+    if (soundEnabled) sounds.click();
     restorePhysicalPreview(mode);
     setDefenseMode(mode);
     setHint(mathSolved
@@ -386,6 +445,19 @@ export default function GestureShotDemo() {
         <StadiumCanvas samples={resolvedShot.displaySamples} goalDistanceM={GOAL_DISTANCE_M} actors={resolvedShot.actors} progress={progress} />
         <div aria-hidden="true" style={{ position: "absolute", inset: 0, pointerEvents: "none", background: "linear-gradient(180deg, rgba(1,8,18,.72) 0%, transparent 24%, transparent 63%, rgba(1,8,16,.9) 100%)" }} />
 
+        {stadiumFeedback && stadiumFeedback.celebration !== "none" && (
+          <div className={`stadium-celebration stadium-celebration--${stadiumFeedback.celebration}`} data-stadium-celebration={stadiumFeedback.celebration} aria-hidden="true">
+            <div className="stadium-celebration__pulse" />
+            {stadiumFeedback.celebration !== "save" && CELEBRATION_PIECES.map((piece, index) => (
+              <span
+                key={`${piece.left}-${index}`}
+                className="stadium-celebration__piece"
+                style={{ left: piece.left, background: piece.color, animationDelay: piece.delay }}
+              />
+            ))}
+          </div>
+        )}
+
         <div
           data-swipe-surface="true"
           role="application"
@@ -434,11 +506,12 @@ export default function GestureShotDemo() {
 
         <header style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 10, padding: "max(14px, env(safe-area-inset-top, 14px)) 16px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, pointerEvents: "none" }}>
           <div>
-            <div style={{ color: "#ffd166", fontSize: 11, fontWeight: 950, letterSpacing: 1.25 }}>CAMINO AL 10 · FASE 8</div>
-            <h1 style={{ margin: "2px 0 0", fontSize: "clamp(22px, 6vw, 30px)", lineHeight: 1, textShadow: "0 2px 10px #000" }}>Cinco tiros, una misión</h1>
+            <div style={{ color: "#ffd166", fontSize: 11, fontWeight: 950, letterSpacing: 1.25 }}>CAMINO AL 10 · FASE 9</div>
+            <h1 style={{ margin: "2px 0 0", fontSize: "clamp(21px, 5.7vw, 29px)", lineHeight: 1, textShadow: "0 2px 10px #000" }}>Siente cada remate</h1>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
             <span style={{ padding: "7px 10px", borderRadius: 999, background: "rgba(4,15,25,.62)", border: "1px solid rgba(255,255,255,.3)", fontSize: 12, fontWeight: 900, backdropFilter: "blur(7px)" }}>Tiro {matchSummary.currentShot}/{MATCH_SHOT_LIMIT}</span>
+            <button onClick={toggleSound} aria-pressed={soundEnabled} aria-label={soundEnabled ? "Silenciar sonido" : "Activar sonido"} style={{ width: 42, height: 42, borderRadius: 13, border: "1px solid rgba(255,255,255,.34)", background: "rgba(4,15,25,.68)", color: "white", fontSize: 18, fontWeight: 900, backdropFilter: "blur(8px)", pointerEvents: "auto" }}>{soundEnabled ? "🔊" : "🔇"}</button>
             <button onClick={leaveDemo} aria-label="Cerrar demo V10 y volver al juego" style={{ width: 42, height: 42, borderRadius: 13, border: "1px solid rgba(255,255,255,.34)", background: "rgba(4,15,25,.68)", color: "white", fontSize: 22, fontWeight: 900, backdropFilter: "blur(8px)", pointerEvents: "auto" }}>×</button>
           </div>
         </header>
@@ -534,6 +607,7 @@ export default function GestureShotDemo() {
           <section role="status" style={{ position: "absolute", top: "29%", left: "50%", transform: "translateX(-50%)", zIndex: 10, width: "min(82%, 360px)", padding: "15px 18px", textAlign: "center", borderRadius: 19, background: "rgba(3,13,20,.82)", border: `2px solid ${resultCopy.accent}`, boxShadow: `0 0 30px ${resultCopy.accent}44`, backdropFilter: "blur(10px)", pointerEvents: "none" }}>
             <strong style={{ display: "block", color: resultCopy.accent, fontSize: 30, lineHeight: 1 }}>{resultCopy.title}</strong>
             <span style={{ display: "block", marginTop: 6, fontSize: 14 }}>{resultCopy.detail}</span>
+            {stadiumFeedback && <span style={{ display: "block", marginTop: 8, color: "#ffe5a3", fontSize: 11, fontWeight: 900 }}>🎙️ {stadiumFeedback.announcer}</span>}
             <span style={{ display: "block", marginTop: 8, color: "#c9d9d1", fontSize: 11, fontWeight: 900 }}>Tablas: {MASTERY_LABELS[currentTrackProgress.mastery]} · Racha {firstTryStreak}</span>
             {justUnlockedAdvanced && <span style={{ display: "block", marginTop: 8, color: "#ffd166", fontSize: 12, fontWeight: 950 }}>🔓 NUEVO RETO: TABLAS 6–9</span>}
           </section>
@@ -544,6 +618,7 @@ export default function GestureShotDemo() {
             <span style={{ display: "block", color: "#72f2a1", fontSize: 10, fontWeight: 950, letterSpacing: 1.35 }}>PARTIDO {matchMission.matchNumber} COMPLETADO</span>
             <strong style={{ display: "block", marginTop: 5, color: "#ffd166", fontSize: 31, lineHeight: 1 }} aria-label={`${matchSummary.stars} de 3 estrellas`}>{"★".repeat(matchSummary.stars)}<span style={{ color: "rgba(255,255,255,.24)" }}>{"★".repeat(3 - matchSummary.stars)}</span></strong>
             <span style={{ display: "block", marginTop: 9, fontSize: 14, fontWeight: 900 }}>{matchSummary.message}</span>
+            {stadiumFeedback && <span style={{ display: "block", marginTop: 8, color: "#ffe5a3", fontSize: 11, fontWeight: 900 }}>🎙️ {stadiumFeedback.announcer}</span>}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 13 }}>
               <span style={{ padding: 9, borderRadius: 12, background: matchSummary.goalBonusReached ? "rgba(114,242,161,.15)" : "rgba(255,255,255,.07)", border: `1px solid ${matchSummary.goalBonusReached ? "#72f2a1" : "rgba(255,255,255,.16)"}`, fontSize: 11, fontWeight: 950 }}>⚽ {matchSummary.goals} GOLES<br /><small>{matchSummary.goalBonusReached ? "BONUS LOGRADO" : `META ${MATCH_GOAL_BONUS}`}</small></span>
               <span style={{ padding: 9, borderRadius: 12, background: matchSummary.mathBonusReached ? "rgba(255,209,102,.15)" : "rgba(255,255,255,.07)", border: `1px solid ${matchSummary.mathBonusReached ? "#ffd166" : "rgba(255,255,255,.16)"}`, fontSize: 11, fontWeight: 950 }}>🎯 {matchSummary.firstTryCorrect} A LA PRIMERA<br /><small>{matchSummary.mathBonusReached ? "BONUS LOGRADO" : `META ${MATCH_MATH_BONUS}`}</small></span>

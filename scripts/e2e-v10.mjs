@@ -163,11 +163,22 @@ try {
     unnamedButtons: [...document.querySelectorAll('button')].filter((button) => !button.disabled && !(button.getAttribute('aria-label') || button.textContent.trim())).length,
   }))()`);
   assert(initial.text.includes("ACADEMIA DE TABLAS"), "Multiplication academy is missing.");
-  assert(initial.text.includes("FASE 8") && initial.text.includes("Cinco tiros, una misión"), "Phase 8 match mission is missing.");
+  assert(initial.text.includes("FASE 9") && initial.text.includes("Siente cada remate"), "Phase 9 stadium atmosphere is missing.");
   assert(initial.text.includes("Tiro 1/5") && initial.text.includes("0/2 GOLES"), "Initial match scoreboard is incorrect.");
   assert(initial.locked, "Advanced multiplication tables should start locked.");
   assert(initial.overflow <= 1, `Mobile layout overflows by ${initial.overflow}px.`);
   assert(initial.unnamedButtons === 0, "An enabled button has no accessible name.");
+
+  const muted = await evaluate(`(() => {
+    const button = document.querySelector('[aria-label="Silenciar sonido"]');
+    if (!button) return false;
+    button.click();
+    return localStorage.getItem('tlm_v10_sound_enabled') === 'false';
+  })()`);
+  assert(muted, "Sound preference could not be muted.");
+  await reload();
+  assert(await evaluate(`Boolean(document.querySelector('[aria-label="Activar sonido"]'))`), "Muted sound preference was not restored.");
+  await evaluate(`document.querySelector('[aria-label="Activar sonido"]')?.click()`);
 
   await solveCurrentQuestion();
   await completeKeyboardShot();
@@ -259,6 +270,7 @@ try {
     mission: JSON.parse(localStorage.getItem('tlm_v10_match_mission_v1') || 'null')
   }))()`);
   assert(matchResult.hasSummary, "Five completed shots did not open the match summary.");
+  assert(await evaluate(`document.querySelector('[data-stadium-celebration]')?.getAttribute('data-stadium-celebration') === 'match'`), "Match celebration was not rendered.");
   assert(matchResult.text.includes("PARTIDO 7 COMPLETADO"), "Match completion was not announced.");
   assert(matchResult.text.includes("JUGAR REVANCHA"), "Rematch action was not offered.");
   assert(matchResult.mission?.shots?.length === 5, "Final match shot was not persisted.");
@@ -283,7 +295,7 @@ try {
 
   console.log(JSON.stringify({
     status: "passed",
-    checks: ["mobile layout", "accessible buttons", "match scoreboard", "math answer", "keyboard shot", "round persistence", "match persistence", "reload recovery", "adaptive reinforcement", "V1 migration", "advanced unlock", "unlock announcement", "five-shot completion", "rematch", "runtime errors", "heap budget"],
+    checks: ["mobile layout", "accessible buttons", "sound preference", "match scoreboard", "math answer", "keyboard shot", "round persistence", "match persistence", "reload recovery", "adaptive reinforcement", "V1 migration", "advanced unlock", "unlock announcement", "five-shot completion", "stadium celebration", "rematch", "runtime errors", "heap budget"],
     firstRound: firstRound.tracks["tables-2-5"],
     unlocked: { ...unlocked, advancedTrack },
     jsHeapUsed,
