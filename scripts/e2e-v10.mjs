@@ -163,7 +163,7 @@ try {
     unnamedButtons: [...document.querySelectorAll('button')].filter((button) => !button.disabled && !(button.getAttribute('aria-label') || button.textContent.trim())).length,
   }))()`);
   assert(initial.text.includes("ACADEMIA DE TABLAS"), "Multiplication academy is missing.");
-  assert(initial.text.includes("FASE 10") && initial.text.includes("Juega con tu equipo"), "Phase 10 social play entry is missing.");
+  assert(initial.text.includes("FASE 11") && initial.text.includes("Juega con tu equipo"), "Phase 11 social play entry is missing.");
   assert(initial.text.includes("Tiro 1/5") && initial.text.includes("0/2 GOLES"), "Initial match scoreboard is incorrect.");
   assert(initial.locked, "Advanced multiplication tables should start locked.");
   assert(initial.overflow <= 1, `Mobile layout overflows by ${initial.overflow}px.`);
@@ -297,10 +297,39 @@ try {
   await waitFor(async () => await evaluate("Boolean(document.querySelector('[data-lightning-lobby]'))"), "Lightning cup lobby did not open.");
   const lobbyState = await evaluate(`(() => ({
     text: document.body.innerText,
-    names: [...document.querySelectorAll('[data-lightning-lobby] input')].map((input) => input.value)
+    names: [...document.querySelectorAll('[data-lightning-lobby] input[aria-label^="Nombre del jugador"]')].map((input) => input.value)
   }))()`);
-  assert(lobbyState.text.includes("Copa relámpago") && lobbyState.text.includes("INICIAR COPA POR TURNOS"), "Lightning cup setup is incomplete.");
+  assert(lobbyState.text.includes("SALA EN VIVO") && lobbyState.text.includes("INICIAR COPA POR TURNOS"), "Social play setup is incomplete.");
   assert(lobbyState.names[0] === "Martín" && lobbyState.names[1] === "Amigo 1", "Safe default player names are missing.");
+
+  await evaluate(`(() => {
+    const room = {
+      code: 'M4RT2N', seed: 'MIRR22', track: 'tables-2-5', status: 'waiting',
+      hostPlayerId: 'player-1', shotsPerPlayer: 3, expiresAt: Date.now() + 7200000,
+      players: [{ id: 'player-1', nickname: 'Martín', colorIndex: 0, shotsCompleted: 0, goals: 0, firstTryCorrect: 0, responseTimeMs: 0, score: 0 }]
+    };
+    window.fetch = async () => new Response(JSON.stringify({
+      session: { roomCode: room.code, playerId: 'player-1', token: 'a'.repeat(40) }, room,
+      ...room
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  })()`);
+  await evaluate(`[...document.querySelectorAll('button')].find((button) => button.textContent.includes('CREAR SALA EN VIVO'))?.click()`);
+  await waitFor(async () => await evaluate("Boolean(document.querySelector('[data-live-room-lobby]'))"), "Remote live room did not open.");
+  const liveRoomState = await evaluate(`(() => ({
+    text: document.body.innerText,
+    session: JSON.parse(localStorage.getItem('tlm_v11_live_room_session_v1') || 'null')
+  }))()`);
+  assert(liveRoomState.text.includes("M4RT2N") && liveRoomState.text.includes("ESPERANDO A UN AMIGO"), "Remote waiting room is incomplete.");
+  assert(liveRoomState.session?.roomCode === "M4RT2N" && liveRoomState.session?.token?.length === 40, "Remote room session was not stored.");
+  await evaluate(`[...document.querySelectorAll('button')].find((button) => button.textContent.includes('COPIAR ENLACE DE LA SALA'))?.click()`);
+  const sharedRoomText = await waitFor(async () => {
+    const text = await evaluate(`document.querySelector('[data-live-room-lobby]')?.innerText || ''`);
+    return text.includes("room=M4RT2N") ? text : false;
+  }, "Remote room share link was not shown.");
+  assert(sharedRoomText.includes("room=M4RT2N") && !sharedRoomText.includes("player-1") && !sharedRoomText.includes("aaaaaaaa"), "Shared room URL leaked credentials or omitted the code.");
+  await evaluate(`[...document.querySelectorAll('button')].find((button) => button.textContent.includes('SALIR DE ESTA SALA'))?.click()`);
+  await waitFor(async () => await evaluate("!document.querySelector('[data-live-room-lobby]')"), "Remote room did not close cleanly.");
+
   await evaluate(`[...document.querySelectorAll('button')].find((button) => button.textContent.includes('INICIAR COPA POR TURNOS'))?.click()`);
   await waitFor(async () => await evaluate("Boolean(document.querySelector('[data-lightning-scoreboard]'))"), "Lightning cup did not start.");
   const mirroredQuestion = await evaluate("document.querySelector('#multiplication-question')?.textContent?.trim()");
@@ -322,7 +351,7 @@ try {
 
   console.log(JSON.stringify({
     status: "passed",
-    checks: ["mobile layout", "accessible buttons", "sound preference", "match scoreboard", "math answer", "keyboard shot", "round persistence", "match persistence", "reload recovery", "adaptive reinforcement", "V1 migration", "advanced unlock", "unlock announcement", "five-shot completion", "stadium celebration", "rematch", "lightning lobby", "safe player defaults", "multiplayer turn", "mirrored question", "lightning persistence", "runtime errors", "heap budget"],
+    checks: ["mobile layout", "accessible buttons", "sound preference", "match scoreboard", "math answer", "keyboard shot", "round persistence", "match persistence", "reload recovery", "adaptive reinforcement", "V1 migration", "advanced unlock", "unlock announcement", "five-shot completion", "stadium celebration", "rematch", "social lobby", "safe player defaults", "remote room creation", "credential-safe sharing", "remote room exit", "multiplayer turn", "mirrored question", "lightning persistence", "runtime errors", "heap budget"],
     firstRound: firstRound.tracks["tables-2-5"],
     unlocked: { ...unlocked, advancedTrack },
     jsHeapUsed,
