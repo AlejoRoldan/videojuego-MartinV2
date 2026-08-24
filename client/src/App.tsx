@@ -20,6 +20,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import ErrorBoundary from "./components/ErrorBoundary";
 import ShotPhysicsLab from "./game/v10/ShotPhysicsLab";
 import V10FieldPreview from "./game/v10/V10FieldPreview";
+import GestureShotDemo from "./game/v10/GestureShotDemo";
 
 function GameRouter() {
   const { state } = useGame();
@@ -71,13 +72,17 @@ function App() {
     && new URLSearchParams(window.location.search).get("physicsLab") === "1";
   const showV10Preview = typeof window !== "undefined"
     && new URLSearchParams(window.location.search).get("v10Preview") === "1";
+  const showV10Demo = typeof window !== "undefined"
+    && new URLSearchParams(window.location.search).get("v10Demo") === "1";
 
   return (
     <ErrorBoundary>
       <ThemeProvider defaultTheme="dark">
         <TooltipProvider>
           <Toaster />
-          {showV10Preview ? (
+          {showV10Demo ? (
+            <GestureShotDemo />
+          ) : showV10Preview ? (
             <V10FieldPreview />
           ) : showPhysicsLab ? (
             <ShotPhysicsLab />

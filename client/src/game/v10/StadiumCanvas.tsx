@@ -14,7 +14,8 @@ import { MATCH_BALL, type FlightSample, type Vec3 } from "./shotPhysics3d";
 interface StadiumCanvasProps {
   samples: readonly FlightSample[];
   goalDistanceM: number;
-  replayToken: number;
+  replayToken?: number;
+  progress?: number;
   onFlightComplete?: () => void;
 }
 
@@ -309,7 +310,7 @@ function drawScene(
   context.fillRect(0, 0, viewport.width, viewport.height);
 }
 
-export default function StadiumCanvas({ samples, goalDistanceM, replayToken, onFlightComplete }: StadiumCanvasProps) {
+export default function StadiumCanvas({ samples, goalDistanceM, replayToken = 0, progress, onFlightComplete }: StadiumCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sizeRef = useRef<CanvasSize>({ width: 360, height: 500, pixelRatio: 1 });
   const progressRef = useRef(0);
@@ -351,6 +352,14 @@ export default function StadiumCanvas({ samples, goalDistanceM, replayToken, onF
   }, [paint]);
 
   useEffect(() => {
+    if (progress === undefined) return;
+    const controlledProgress = Math.max(0, Math.min(1, progress));
+    progressRef.current = controlledProgress;
+    paint(controlledProgress);
+  }, [paint, progress]);
+
+  useEffect(() => {
+    if (progress !== undefined) return;
     if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
     if (replayToken === 0) {
       progressRef.current = 0;
@@ -381,7 +390,7 @@ export default function StadiumCanvas({ samples, goalDistanceM, replayToken, onF
       if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
       frameRef.current = null;
     };
-  }, [paint, replayToken, samples]);
+  }, [paint, progress, replayToken, samples]);
 
   return (
     <canvas

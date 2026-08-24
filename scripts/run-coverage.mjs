@@ -18,6 +18,8 @@ const coreModules = new Set([
   "profileMigration.ts",
   "shotPhysics3d.ts",
   "cameraProjection.ts",
+  "midFlightSpin.ts",
+  "shotGesture.ts",
   "mathEngine.ts",
 ]);
 const minimumModules = Number(process.env.COVERAGE_MIN_MODULES ?? coreModules.size);
