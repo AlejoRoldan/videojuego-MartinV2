@@ -130,8 +130,8 @@ try {
   const solveCurrentQuestion = async () => {
     const answer = await waitFor(async () => await evaluate(`(() => {
       const question = document.querySelector("#multiplication-question")?.textContent?.trim();
-      const match = question?.match(/^(\d+) × (\d+) = \?$/);
-      return match ? Number(match[1]) * Number(match[2]) : null;
+      const factors = question?.match(/[0-9]+/g)?.map(Number);
+      return factors?.length === 2 ? factors[0] * factors[1] : null;
     })()`), "Could not parse the current multiplication question.");
     const clicked = await evaluate(`(() => {
       const button = document.querySelector('[aria-label="Responder ${answer}"]');
