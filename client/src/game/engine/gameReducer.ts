@@ -92,7 +92,7 @@ function createPowerParticles(x: number, y: number, power: Exclude<MathPower, nu
     turbo: "#4DD0E1",
     perfect: "#FFF3A3",
   };
-  const count = power === "perfect" ? 18 : 12;
+  const count = power === "perfect" ? 8 : 6;
   return Array.from({ length: count }, (_, i) => {
     const angle = (i / count) * Math.PI * 2;
     const speed = power === "turbo" ? 2.7 : power === "perfect" ? 2.2 : 1.8;
@@ -366,7 +366,7 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       let newParticles: Particle[] = [];
       let newFloatingTexts: FloatingText[] = [];
       if (result.scored) {
-        newParticles = createConfettiParticles(0.5, 0.3, state.currentMathPower === "perfect" ? 50 : 30);
+        newParticles = createConfettiParticles(0.5, 0.3, state.currentMathPower === "perfect" ? 24 : 16);
         newFloatingTexts = [createFloatingText("¡GOL!", 0.5, 0.3, "#FFD700", "xl")];
         if (newCombo > 1) newFloatingTexts.push(createFloatingText(`COMBO x${newCombo}!`, 0.5, 0.45, "#FF6B35", "lg"));
         if (result.bonusMultiplier > 1.5) newFloatingTexts.push(createFloatingText("¡ESQUINA! BONUS", 0.5, 0.55, "#7BED9F", "md"));
@@ -377,7 +377,7 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       } else {
         newFloatingTexts = [createFloatingText("¡Afuera!", 0.5, 0.3, "#FF4757", "md")];
       }
-      if (result.mathCorrect && result.scored) newParticles = [...newParticles, ...createStarParticles(0.5, 0.5)];
+      if (result.mathCorrect && result.scored) newParticles = [...newParticles, ...createStarParticles(0.5, 0.5).slice(0, 4)];
       if (result.input.mathPower) newParticles = [...newParticles, ...createPowerParticles(0.5, 0.4, result.input.mathPower)];
       if (result.mathCorrect && !result.scored) {
         newFloatingTexts.push(createFloatingText("¡Buen cálculo! El poder contó aunque el tiro fue detenido.", 0.5, 0.52, "#D8FFD8", "md"));

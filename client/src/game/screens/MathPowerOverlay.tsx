@@ -6,7 +6,7 @@ export default function MathPowerOverlay() {
   const { state } = useGame();
   const power = state.currentMathPower;
 
-  if (state.screen !== "gameplay" || !power || state.phase === "math") return null;
+  if (state.screen !== "gameplay" || !power || state.phase === "math" || state.phase === "result") return null;
 
   const meta = MATH_POWER_META[power];
   const isPerfect = power === "perfect";

@@ -167,7 +167,7 @@ try {
   await pressEnter();
   await waitFor(async () => (await evaluate("document.body.innerText")).includes("Seleccionar Nivel"), "Level selector did not open.");
 
-  await evaluate(`localStorage.setItem("tlm_profile", JSON.stringify({ schemaVersion: 2, unlockedLevels: [1, 2] }))`);
+  await evaluate(`localStorage.setItem("tlm_profile", JSON.stringify({ schemaVersion: 2, unlockedLevels: [1, 2, 5] }))`);
   await reload();
   await clickButtonContaining("Ritmo de\npartido");
   await evaluate(`[...document.querySelectorAll("button")].find((el) => el.textContent.includes("JUGAR")).focus()`);
@@ -204,6 +204,17 @@ try {
     })()`), "Shot destination marker did not render.", 6_000);
     powerObserved = Boolean(destination.power) || Boolean(await evaluate("window.__tlmPowerObserved === true"));
     await evaluate(`document.querySelector('[aria-label^="Disparar a la coordenada"]')?.click()`);
+    const flightLayers = await waitFor(async () => await evaluate(`(() => {
+      const powerTrail = document.querySelector('.shot-power-trail');
+      const velocityCore = document.querySelector('.shot-velocity-core');
+      const trajectoryBlur = document.querySelector('.shot-trajectory-blur');
+      if (!powerTrail || !velocityCore || !trajectoryBlur) return null;
+      return {
+        powerTrailPoints: powerTrail.querySelector('polyline')?.getAttribute('points')?.length ?? 0,
+        velocityCore: true,
+        trajectoryBlurDots: trajectoryBlur.querySelectorAll('span').length,
+      };
+    })()`), "Shot visual flight layers did not render.", 6_000);
     const keeperDuring = await waitFor(async () => await evaluate(`(() => {
       const marker = document.querySelector('.shot-destination-marker');
       const image = document.querySelector('img[alt="Portero"]');
@@ -222,7 +233,7 @@ try {
       return count > 0 ? count : false;
     }, "Shot trajectory blur did not render.", 6_000);
     const impactObserved = await waitFor(
-      async () => Boolean(await evaluate("Boolean(document.querySelector('.shot-microimpact'))")),
+      async () => Boolean(await evaluate("Boolean(document.querySelector('.shot-microimpact') && document.querySelector('.shot-impact-burst'))")),
       "Shot microimpact did not render.",
       6_000,
     );
@@ -231,7 +242,7 @@ try {
       "Shot did not reach a result.",
       8_000,
     );
-    return { destination, trailDots, impactObserved, powerObserved, keeperBefore, keeperDuring };
+    return { destination, trailDots, flightLayers, impactObserved, powerObserved, keeperBefore, keeperDuring };
 
   };
 
@@ -249,6 +260,15 @@ try {
   await evaluate(`document.querySelector('[aria-label="Continuar al siguiente tiro"]').focus()`);
   await pressEnter();
   await waitFor(async () => (await evaluate(`document.querySelectorAll('[aria-label^="Apuntar a coordenada"]:not([disabled])').length`)) > 0, "Second shot did not unlock the next attempt.");
+  await evaluate(`document.querySelector('[aria-label="Volver a seleccionar nivel"]').click()`);
+  await waitFor(async () => (await evaluate("document.body.innerText")).includes("Seleccionar Nivel"), "Could not open level selector for wall verification.");
+  await evaluate(`document.querySelector('[aria-label^="Jugar nivel 5:"]').click()`);
+  await waitFor(async () => (await evaluate(`document.querySelectorAll('[aria-label^="Apuntar a coordenada"]:not([disabled])').length`)) >= 49, "Level 5 gameplay did not render for wall verification.");
+  const wallState = await evaluate(`(() => ({
+    container: Boolean(document.querySelector('[data-free-kick-wall="true"]')),
+    players: document.querySelectorAll('[data-wall-player]').length,
+  }))()`);
+  assert(wallState.container && wallState.players >= 3, `Level 5 free-kick wall did not render: ${JSON.stringify(wallState)}.`);
   const masteryAfterShots = await evaluate(`(() => {
     const profile = JSON.parse(localStorage.getItem("tlm_profile") || "{}");
     return profile.masteryByDomain || {};
@@ -330,7 +350,7 @@ try {
   const jsHeapUsed = performanceMetrics.metrics.find((metric) => metric.name === "JSHeapUsedSize")?.value ?? 0;
   const runtimeErrors = cdp.events.filter((event) => event.method === "Runtime.exceptionThrown");
   assert(runtimeErrors.length === 0, `Runtime exceptions detected: ${runtimeErrors.length}.`);
-  console.log(JSON.stringify({ status: "passed", checks: ["pace persistence", "level navigation", "keeper scale", "keeper snapshot", "math answer", "math power", "shot trail", "shot destination separation", "shot result", "next shot", "mastery persistence", "mission reward", "progress domains", "confirmed reset", "reduced motion", "accessibility"], firstShot, secondShot, aimDistance, masteryAfterShots, missionState, progressState, resetState, reducedMotion, accessibilityIssues, jsHeapUsed }, null, 2));
+  console.log(JSON.stringify({ status: "passed", checks: ["pace persistence", "level navigation", "keeper scale", "keeper snapshot", "math answer", "math power", "shot trail", "shot visual layers", "shot impact burst", "shot destination separation", "shot result", "next shot", "level 5 wall", "mastery persistence", "mission reward", "progress domains", "confirmed reset", "reduced motion", "accessibility"], firstShot, secondShot, aimDistance, wallState, masteryAfterShots, missionState, progressState, resetState, reducedMotion, accessibilityIssues, jsHeapUsed }, null, 2));
 } finally {
   cdp?.close();
   await stopProcess(chrome);
