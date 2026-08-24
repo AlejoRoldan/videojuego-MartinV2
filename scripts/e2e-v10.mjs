@@ -128,12 +128,11 @@ try {
     await waitFor(async () => await evaluate("Boolean(document.querySelector('[data-v10-gesture-demo]'))"), "V10 demo did not render after reload");
   };
   const solveCurrentQuestion = async () => {
-    const answer = await evaluate(`(() => {
+    const answer = await waitFor(async () => await evaluate(`(() => {
       const question = document.querySelector("#multiplication-question")?.textContent?.trim();
       const match = question?.match(/^(\d+) × (\d+) = \?$/);
       return match ? Number(match[1]) * Number(match[2]) : null;
-    })()`);
-    assert(Number.isFinite(answer), "Could not parse the current multiplication question.");
+    })()`), "Could not parse the current multiplication question.");
     const clicked = await evaluate(`(() => {
       const button = document.querySelector('[aria-label="Responder ${answer}"]');
       if (!button) return false;
