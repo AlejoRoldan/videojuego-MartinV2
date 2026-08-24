@@ -125,7 +125,7 @@ try {
   const reload = async () => {
     await cdp.send("Page.reload", { ignoreCache: true });
     await waitFor(async () => (await evaluate("document.readyState")) === "complete", "Demo reload did not finish");
-    await waitFor(async () => Boolean(await evaluate("document.querySelector('[data-v10-gesture-demo]')")), "V10 demo did not render after reload");
+    await waitFor(async () => await evaluate("Boolean(document.querySelector('[data-v10-gesture-demo]'))"), "V10 demo did not render after reload");
   };
   const solveCurrentQuestion = async () => {
     const answer = await evaluate(`(() => {
@@ -134,7 +134,12 @@ try {
       return match ? Number(match[1]) * Number(match[2]) : null;
     })()`);
     assert(Number.isFinite(answer), "Could not parse the current multiplication question.");
-    const clicked = await evaluate(`Boolean(document.querySelector('[aria-label="Responder ${answer}"]')?.click() ?? true)`);
+    const clicked = await evaluate(`(() => {
+      const button = document.querySelector('[aria-label="Responder ${answer}"]');
+      if (!button) return false;
+      button.click();
+      return true;
+    })()`);
     assert(clicked, `The correct answer button (${answer}) was not available.`);
     await waitFor(async () => (await evaluate("document.body.innerText")).includes("Precisión matemática lista"), "Correct answer did not enable the shot");
   };
@@ -148,7 +153,7 @@ try {
 
   await cdp.send("Page.navigate", { url: APP_URL });
   await waitFor(async () => (await evaluate("document.readyState")) === "complete", "V10 demo did not load");
-  await waitFor(async () => Boolean(await evaluate("document.querySelector('[data-v10-gesture-demo]')")), "V10 game surface was not found");
+  await waitFor(async () => await evaluate("Boolean(document.querySelector('[data-v10-gesture-demo]'))"), "V10 game surface was not found");
   await evaluate("localStorage.clear()");
   await reload();
 
