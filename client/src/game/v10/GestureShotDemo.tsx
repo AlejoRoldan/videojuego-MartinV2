@@ -7,6 +7,12 @@ import {
   type ResolvedFootballShot,
 } from "./footballCollisions";
 import { continueFlightWithSpin, createInteractiveShotConfig } from "./midFlightSpin";
+import {
+  MULTIPLICATION_TRACKS,
+  createMultiplicationChallenge,
+  evaluateMultiplicationAnswer,
+  type MultiplicationTrack,
+} from "./multiplicationRound";
 import { curveFromSwipe, getForceBand, launchFromSwipe, type GesturePoint, type LaunchGesture } from "./shotGesture";
 import { simulateShot, type ShotPhysicsConfig, type ShotPhysicsResult } from "./shotPhysics3d";
 
@@ -55,12 +61,21 @@ export default function GestureShotDemo() {
   const initialResolved = useMemo(() => resolveFootballShot(initialPhysicsResult, "open", DEFAULT_CONFIG.goal), [initialPhysicsResult]);
   const [resolvedShot, setResolvedShot] = useState<ResolvedFootballShot>(initialResolved);
   const [defenseMode, setDefenseMode] = useState<DefenseMode>("open");
+  const [tableTrack, setTableTrack] = useState<MultiplicationTrack>("tables-2-5");
+  const [challengeIndex, setChallengeIndex] = useState(0);
+  const challenge = useMemo(() => createMultiplicationChallenge(challengeIndex, tableTrack), [challengeIndex, tableTrack]);
+  const [mathSolved, setMathSolved] = useState(false);
+  const [mathAttempts, setMathAttempts] = useState(0);
+  const [mathFeedback, setMathFeedback] = useState("Resuelve para habilitar el remate");
+  const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
+  const [correctCount, setCorrectCount] = useState(0);
+  const [firstTryStreak, setFirstTryStreak] = useState(0);
   const [phase, setPhase] = useState<DemoPhase>("ready");
   const [progress, setProgress] = useState(0);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [launch, setLaunch] = useState<LaunchGesture | null>(null);
   const [spinApplied, setSpinApplied] = useState<"left" | "right" | null>(null);
-  const [hint, setHint] = useState("Desliza el balón hacia el arco");
+  const [hint, setHint] = useState("Resuelve la multiplicación para habilitar el tiro");
   const frameRef = useRef<number | null>(null);
   const physicsResultRef = useRef<ShotPhysicsResult>(initialPhysicsResult);
   const resolvedRef = useRef<ResolvedFootballShot>(initialResolved);
@@ -126,38 +141,69 @@ export default function GestureShotDemo() {
     setHint(direction === "right" ? "Efecto aplicado hacia la derecha" : "Efecto aplicado hacia la izquierda");
   };
 
-  const reset = () => {
-    stopAnimation();
-    const nextResolved = resolveFootballShot(initialPhysicsResult, defenseMode, DEFAULT_CONFIG.goal);
-    physicsResultRef.current = initialPhysicsResult;
-    resolvedRef.current = nextResolved;
-    configRef.current = DEFAULT_CONFIG;
-    elapsedPhysicsSecondsRef.current = 0;
-    setResolvedShot(nextResolved);
-    setPhase("ready");
-    setProgress(0);
-    setDrag(null);
-    setLaunch(null);
-    setSpinApplied(null);
-    setHint("Desliza el balón hacia el arco");
-  };
-
-  const selectDefense = (mode: DefenseMode) => {
-    if (phase === "flight") return;
+  const restorePhysicalPreview = (mode: DefenseMode) => {
     stopAnimation();
     const nextResolved = resolveFootballShot(initialPhysicsResult, mode, DEFAULT_CONFIG.goal);
     physicsResultRef.current = initialPhysicsResult;
     resolvedRef.current = nextResolved;
     configRef.current = DEFAULT_CONFIG;
     elapsedPhysicsSecondsRef.current = 0;
-    setDefenseMode(mode);
     setResolvedShot(nextResolved);
     setPhase("ready");
     setProgress(0);
     setDrag(null);
     setLaunch(null);
     setSpinApplied(null);
-    setHint(mode === "wall" ? "Supera la barrera con altura o efecto" : mode === "keeper" ? "Busca un rincón fuera de su alcance" : "Desliza el balón hacia el arco");
+  };
+
+  const nextChallenge = () => {
+    restorePhysicalPreview(defenseMode);
+    setChallengeIndex((current) => current + 1);
+    setMathSolved(false);
+    setMathAttempts(0);
+    setSelectedAnswer(null);
+    setMathFeedback("Resuelve para habilitar el remate");
+    setHint("Resuelve la multiplicación para habilitar el tiro");
+  };
+
+  const selectTableTrack = (track: MultiplicationTrack) => {
+    if (phase === "flight") return;
+    restorePhysicalPreview(defenseMode);
+    setTableTrack(track);
+    setChallengeIndex(0);
+    setMathSolved(false);
+    setMathAttempts(0);
+    setSelectedAnswer(null);
+    setCorrectCount(0);
+    setFirstTryStreak(0);
+    setMathFeedback("Resuelve para habilitar el remate");
+    setHint(`Comienza con ${MULTIPLICATION_TRACKS[track].label.toLowerCase()}`);
+  };
+
+  const answerMath = (answer: number) => {
+    if (mathSolved || phase !== "ready") return;
+    const evaluation = evaluateMultiplicationAnswer(challenge, answer, mathAttempts);
+    setSelectedAnswer(answer);
+    setMathAttempts(evaluation.nextAttempt);
+    setMathFeedback(evaluation.feedback);
+    if (evaluation.correct) {
+      setMathSolved(true);
+      setCorrectCount((current) => current + 1);
+      setFirstTryStreak((current) => evaluation.firstTry ? current + 1 : 0);
+      setHint(`${challenge.a} × ${challenge.b} = ${challenge.answer} · 🎯 Precisión lista`);
+    } else {
+      setFirstTryStreak(0);
+      setHint("Casi: usa la ayuda y vuelve a intentarlo");
+    }
+  };
+
+  const selectDefense = (mode: DefenseMode) => {
+    if (phase === "flight") return;
+    restorePhysicalPreview(mode);
+    setDefenseMode(mode);
+    setHint(mathSolved
+      ? mode === "wall" ? "Precisión lista: supera la barrera" : mode === "keeper" ? "Precisión lista: busca un rincón" : "Precisión lista: desliza hacia el arco"
+      : "Resuelve la multiplicación para habilitar el tiro");
   };
 
   const leaveDemo = () => {
@@ -168,6 +214,10 @@ export default function GestureShotDemo() {
 
   const beginGesture = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (phase === "result" || (phase === "flight" && spinApplied)) return;
+    if (phase === "ready" && !mathSolved) {
+      setHint("Primero resuelve la multiplicación");
+      return;
+    }
     const point = localPoint(event);
     const bounds = event.currentTarget.getBoundingClientRect();
     if (phase === "ready" && point.y < bounds.height * 0.48) {
@@ -245,7 +295,7 @@ export default function GestureShotDemo() {
           onPointerUp={finishGesture}
           onPointerCancel={cancelGesture}
           onKeyDown={(event) => {
-            if ((event.key === "Enter" || event.key === " ") && phase === "ready") {
+            if ((event.key === "Enter" || event.key === " ") && phase === "ready" && mathSolved) {
               event.preventDefault();
               const keyboardLaunch = launchFromSwipe(
                 { x: 200, y: 520, timeMs: 0 },
@@ -262,10 +312,10 @@ export default function GestureShotDemo() {
               applySpin(88, "right");
             } else if ((event.key === "Enter" || event.key === " ") && phase === "result") {
               event.preventDefault();
-              reset();
+              nextChallenge();
             }
           }}
-          style={{ position: "absolute", inset: 0, zIndex: 6, touchAction: "none", outline: "none", cursor: phase === "ready" ? "grab" : phase === "flight" && !spinApplied ? "ew-resize" : "default" }}
+          style={{ position: "absolute", inset: 0, zIndex: 6, touchAction: "none", outline: "none", cursor: phase === "ready" && mathSolved ? "grab" : phase === "flight" && !spinApplied ? "ew-resize" : "default" }}
         />
 
         {drag && (
@@ -283,11 +333,11 @@ export default function GestureShotDemo() {
 
         <header style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 10, padding: "max(14px, env(safe-area-inset-top, 14px)) 16px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, pointerEvents: "none" }}>
           <div>
-            <div style={{ color: "#ffd166", fontSize: 11, fontWeight: 950, letterSpacing: 1.25 }}>CAMINO AL 10 · FASE 4</div>
-            <h1 style={{ margin: "2px 0 0", fontSize: "clamp(22px, 6vw, 30px)", lineHeight: 1, textShadow: "0 2px 10px #000" }}>Supera la defensa</h1>
+            <div style={{ color: "#ffd166", fontSize: 11, fontWeight: 950, letterSpacing: 1.25 }}>CAMINO AL 10 · FASE 5</div>
+            <h1 style={{ margin: "2px 0 0", fontSize: "clamp(22px, 6vw, 30px)", lineHeight: 1, textShadow: "0 2px 10px #000" }}>Resuelve y remata</h1>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-            <span style={{ padding: "7px 10px", borderRadius: 999, background: "rgba(4,15,25,.62)", border: "1px solid rgba(255,255,255,.3)", fontSize: 12, fontWeight: 900, backdropFilter: "blur(7px)" }}>18 m</span>
+            <span style={{ padding: "7px 10px", borderRadius: 999, background: "rgba(4,15,25,.62)", border: "1px solid rgba(255,255,255,.3)", fontSize: 12, fontWeight: 900, backdropFilter: "blur(7px)" }}>Reto {challengeIndex % 5 + 1}/5</span>
             <button onClick={leaveDemo} aria-label="Cerrar demo V10 y volver al juego" style={{ width: 42, height: 42, borderRadius: 13, border: "1px solid rgba(255,255,255,.34)", background: "rgba(4,15,25,.68)", color: "white", fontSize: 22, fontWeight: 900, backdropFilter: "blur(8px)", pointerEvents: "auto" }}>×</button>
           </div>
         </header>
@@ -322,7 +372,38 @@ export default function GestureShotDemo() {
           })}
         </div>
 
-        {phase === "ready" && !drag && (
+        {phase === "ready" && !mathSolved && (
+          <section data-v10-multiplication-challenge="true" aria-labelledby="multiplication-question" style={{ position: "absolute", top: "28.5%", left: 14, right: 14, zIndex: 12, padding: "13px 14px 14px", borderRadius: 20, background: "rgba(3,13,22,.9)", border: "2px solid rgba(114,242,161,.62)", boxShadow: "0 12px 34px rgba(0,0,0,.34)", backdropFilter: "blur(12px)", pointerEvents: "auto" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 9 }}>
+              <span style={{ color: "#72f2a1", fontSize: 10, fontWeight: 950, letterSpacing: 1.1 }}>ACADEMIA DE TABLAS</span>
+              <span style={{ color: "#d6e7df", fontSize: 10, fontWeight: 900 }}>Aciertos {correctCount} · Racha {firstTryStreak}</span>
+            </div>
+            <div role="group" aria-label="Rango de tablas" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5, marginBottom: 10 }}>
+              {(Object.keys(MULTIPLICATION_TRACKS) as MultiplicationTrack[]).map((track) => {
+                const selected = tableTrack === track;
+                return (
+                  <button key={track} type="button" aria-pressed={selected} onClick={() => selectTableTrack(track)} style={{ minHeight: 31, border: selected ? "2px solid #72f2a1" : "1px solid rgba(255,255,255,.2)", borderRadius: 10, background: selected ? "rgba(114,242,161,.16)" : "rgba(255,255,255,.06)", color: selected ? "#a6f8c2" : "#d6e2dc", fontSize: 11, fontWeight: 950 }}>
+                    {MULTIPLICATION_TRACKS[track].label}
+                  </button>
+                );
+              })}
+            </div>
+            <h2 id="multiplication-question" style={{ margin: "2px 0 11px", textAlign: "center", fontSize: "clamp(30px, 9vw, 42px)", lineHeight: 1, letterSpacing: 1, textShadow: "0 2px 10px #000" }}>{challenge.question}</h2>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8 }}>
+              {challenge.options.map((answer) => {
+                const wasWrong = selectedAnswer === answer && answer !== challenge.answer;
+                return (
+                  <button key={answer} type="button" onClick={() => answerMath(answer)} aria-label={`Responder ${answer}`} style={{ minHeight: 47, borderRadius: 13, border: wasWrong ? "2px solid #ff8b8b" : "2px solid rgba(255,255,255,.28)", background: wasWrong ? "rgba(255,90,90,.2)" : "linear-gradient(180deg, rgba(255,255,255,.15), rgba(255,255,255,.07))", color: "white", fontSize: 21, fontWeight: 950, boxShadow: "0 3px 0 rgba(0,0,0,.28)" }}>
+                    {answer}
+                  </button>
+                );
+              })}
+            </div>
+            <p aria-live="polite" style={{ minHeight: 18, margin: "10px 0 0", color: mathAttempts > 0 ? "#ffd9a0" : "#cfe0d8", textAlign: "center", fontSize: 12, fontWeight: 850 }}>{mathFeedback}</p>
+          </section>
+        )}
+
+        {phase === "ready" && mathSolved && !drag && (
           <div aria-hidden="true" style={{ position: "absolute", left: "50%", bottom: "22%", width: 76, height: 76, transform: "translate(-50%, 50%)", borderRadius: "50%", border: "2px solid rgba(255,189,89,.9)", boxShadow: "0 0 22px rgba(255,189,89,.42)", zIndex: 5, animation: "pulse-glow 1.4s ease-in-out infinite", pointerEvents: "none" }} />
         )}
 
@@ -344,10 +425,10 @@ export default function GestureShotDemo() {
             </div>
           </div>
           {phase === "result" ? (
-            <button onClick={reset} style={{ minHeight: 56, borderRadius: 17, border: "3px solid rgba(255,255,255,.4)", background: "linear-gradient(180deg, #ff7a3d, #e64921)", color: "white", fontSize: 19, fontWeight: 950, boxShadow: "0 6px 0 #9e2d17", pointerEvents: "auto" }}>PROBAR OTRO TIRO</button>
+            <button onClick={nextChallenge} style={{ minHeight: 56, borderRadius: 17, border: "3px solid rgba(255,255,255,.4)", background: "linear-gradient(180deg, #ff7a3d, #e64921)", color: "white", fontSize: 19, fontWeight: 950, boxShadow: "0 6px 0 #9e2d17", pointerEvents: "auto" }}>SIGUIENTE RETO</button>
           ) : (
             <p style={{ margin: 0, textAlign: "center", color: "rgba(225,238,230,.78)", fontSize: 11, fontWeight: 800 }}>
-              {phase === "ready" ? "La rapidez controla la fuerza · la dirección controla el destino" : spinApplied ? "El efecto ya fue aplicado" : "Un segundo gesto lateral curva la pelota"}
+              {phase === "ready" ? mathSolved ? "Precisión matemática lista · ahora manda tu gesto" : "Primero calcula · luego remata" : spinApplied ? "El efecto ya fue aplicado" : "Un segundo gesto lateral curva la pelota"}
             </p>
           )}
         </section>

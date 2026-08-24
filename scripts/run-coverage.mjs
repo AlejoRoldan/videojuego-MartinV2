@@ -21,6 +21,7 @@ const coreModules = new Set([
   "midFlightSpin.ts",
   "shotGesture.ts",
   "footballCollisions.ts",
+  "multiplicationRound.ts",
   "mathEngine.ts",
 ]);
 const minimumModules = Number(process.env.COVERAGE_MIN_MODULES ?? coreModules.size);
