@@ -24,6 +24,7 @@ const coreModules = new Set([
   "multiplicationRound.ts",
   "multiplicationProgress.ts",
   "adaptiveMultiplication.ts",
+  "matchMission.ts",
   "mathEngine.ts",
 ]);
 const minimumModules = Number(process.env.COVERAGE_MIN_MODULES ?? coreModules.size);

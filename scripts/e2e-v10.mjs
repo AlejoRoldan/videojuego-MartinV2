@@ -163,6 +163,8 @@ try {
     unnamedButtons: [...document.querySelectorAll('button')].filter((button) => !button.disabled && !(button.getAttribute('aria-label') || button.textContent.trim())).length,
   }))()`);
   assert(initial.text.includes("ACADEMIA DE TABLAS"), "Multiplication academy is missing.");
+  assert(initial.text.includes("FASE 8") && initial.text.includes("Cinco tiros, una misión"), "Phase 8 match mission is missing.");
+  assert(initial.text.includes("Tiro 1/5") && initial.text.includes("0/2 GOLES"), "Initial match scoreboard is incorrect.");
   assert(initial.locked, "Advanced multiplication tables should start locked.");
   assert(initial.overflow <= 1, `Mobile layout overflows by ${initial.overflow}px.`);
   assert(initial.unnamedButtons === 0, "An enabled button has no accessible name.");
@@ -170,9 +172,12 @@ try {
   await solveCurrentQuestion();
   await completeKeyboardShot();
   const firstRound = await evaluate(`JSON.parse(localStorage.getItem('tlm_v10_multiplication_progress_v2') || localStorage.getItem('tlm_v10_multiplication_progress_v1') || 'null')`);
+  const firstMatchShot = await evaluate(`JSON.parse(localStorage.getItem('tlm_v10_match_mission_v1') || 'null')`);
   assert(firstRound?.tracks?.["tables-2-5"]?.roundsCompleted === 1, "Completed round was not persisted.");
+  assert(firstMatchShot?.shots?.length === 1, "Completed shot was not added to the match mission.");
   await reload();
   assert((await evaluate("document.body.innerText")).includes("1 retos"), "Persisted progress was not restored after reload.");
+  assert((await evaluate("document.body.innerText")).includes("Tiro 2/5"), "Match mission was not restored after reload.");
 
   await evaluate(`(() => {
     const facts = {};
@@ -235,6 +240,41 @@ try {
   assert(advancedTrack.locked === false, "Advanced track remained visually locked.");
   assert(advancedTrack.ariaDisabled !== "true", "Advanced track remained disabled after unlock.");
 
+  await evaluate(`localStorage.setItem('tlm_v10_match_mission_v1', JSON.stringify({
+    version: 1,
+    matchNumber: 7,
+    shots: [
+      { scored: true, firstTry: true },
+      { scored: false, firstTry: true },
+      { scored: false, firstTry: false },
+      { scored: false, firstTry: false }
+    ]
+  }))`);
+  await reload();
+  await solveCurrentQuestion();
+  await completeKeyboardShot();
+  const matchResult = await evaluate(`(() => ({
+    hasSummary: Boolean(document.querySelector('[data-match-summary]')),
+    text: document.body.innerText,
+    mission: JSON.parse(localStorage.getItem('tlm_v10_match_mission_v1') || 'null')
+  }))()`);
+  assert(matchResult.hasSummary, "Five completed shots did not open the match summary.");
+  assert(matchResult.text.includes("PARTIDO 7 COMPLETADO"), "Match completion was not announced.");
+  assert(matchResult.text.includes("JUGAR REVANCHA"), "Rematch action was not offered.");
+  assert(matchResult.mission?.shots?.length === 5, "Final match shot was not persisted.");
+  const rematchStarted = await evaluate(`(() => {
+    const button = [...document.querySelectorAll('button')].find((item) => item.textContent.includes('JUGAR REVANCHA'));
+    if (!button) return false;
+    button.click();
+    return true;
+  })()`);
+  assert(rematchStarted, "Rematch button was not actionable.");
+  const rematch = await waitFor(async () => await evaluate(`(() => {
+    const mission = JSON.parse(localStorage.getItem('tlm_v10_match_mission_v1') || 'null');
+    return document.body.innerText.includes('Tiro 1/5') && mission?.matchNumber === 8 && mission?.shots?.length === 0;
+  })()`), "Rematch did not reset the five-shot mission.");
+  assert(rematch === true, "Rematch state is inconsistent.");
+
   const runtimeErrors = cdp.events.filter((event) => event.method === "Runtime.exceptionThrown");
   assert(runtimeErrors.length === 0, `Runtime exceptions detected: ${runtimeErrors.length}.`);
   const metrics = await cdp.send("Performance.getMetrics");
@@ -243,7 +283,7 @@ try {
 
   console.log(JSON.stringify({
     status: "passed",
-    checks: ["mobile layout", "accessible buttons", "math answer", "keyboard shot", "round persistence", "reload recovery", "adaptive reinforcement", "V1 migration", "advanced unlock", "unlock announcement", "runtime errors", "heap budget"],
+    checks: ["mobile layout", "accessible buttons", "match scoreboard", "math answer", "keyboard shot", "round persistence", "match persistence", "reload recovery", "adaptive reinforcement", "V1 migration", "advanced unlock", "unlock announcement", "five-shot completion", "rematch", "runtime errors", "heap budget"],
     firstRound: firstRound.tracks["tables-2-5"],
     unlocked: { ...unlocked, advancedTrack },
     jsHeapUsed,
