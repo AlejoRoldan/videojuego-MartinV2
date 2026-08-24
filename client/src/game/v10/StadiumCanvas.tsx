@@ -10,14 +10,18 @@ import {
   type Viewport,
 } from "./cameraProjection";
 import { MATCH_BALL, type FlightSample, type Vec3 } from "./shotPhysics3d";
+import type { GoalkeeperActor, SceneActors, WallActor } from "./footballCollisions";
 
 interface StadiumCanvasProps {
   samples: readonly FlightSample[];
   goalDistanceM: number;
+  actors?: SceneActors;
   replayToken?: number;
   progress?: number;
   onFlightComplete?: () => void;
 }
+
+const EMPTY_ACTORS: SceneActors = { wall: [], goalkeeper: null };
 
 interface CanvasSize extends Viewport {
   pixelRatio: number;
@@ -225,6 +229,125 @@ function drawGoal(context: CanvasRenderingContext2D, viewport: Viewport, camera:
   ], camera, viewport, postColor, 3.5);
 }
 
+function drawWallPlayer(
+  context: CanvasRenderingContext2D,
+  viewport: Viewport,
+  camera: CameraPose,
+  actor: WallActor,
+  index: number,
+): void {
+  const foot = projectWorldPoint({ x: actor.xM, y: 0.04, z: actor.zM }, camera, viewport);
+  const hip = projectWorldPoint({ x: actor.xM, y: actor.heightM * 0.52, z: actor.zM }, camera, viewport);
+  const shoulder = projectWorldPoint({ x: actor.xM, y: actor.heightM * 0.78, z: actor.zM }, camera, viewport);
+  const head = projectWorldPoint({ x: actor.xM, y: actor.heightM, z: actor.zM }, camera, viewport);
+  if (!foot || !hip || !shoulder || !head) return;
+  const width = Math.max(5, shoulder.pixelsPerMeter * actor.widthM);
+  const headRadius = Math.max(2.8, head.pixelsPerMeter * 0.11);
+
+  context.save();
+  context.lineCap = "round";
+  context.strokeStyle = "rgba(4,12,20,.5)";
+  context.lineWidth = Math.max(3, width * 0.24);
+  context.beginPath();
+  context.moveTo(hip.x, hip.y);
+  context.lineTo(foot.x - width * 0.24, foot.y);
+  context.moveTo(hip.x, hip.y);
+  context.lineTo(foot.x + width * 0.24, foot.y);
+  context.stroke();
+
+  const jersey = context.createLinearGradient(shoulder.x, shoulder.y, hip.x, hip.y);
+  jersey.addColorStop(0, index % 2 === 0 ? "#ff9d3d" : "#ffb24c");
+  jersey.addColorStop(1, "#d95128");
+  context.fillStyle = jersey;
+  context.beginPath();
+  context.roundRect(shoulder.x - width / 2, shoulder.y, width, Math.max(8, hip.y - shoulder.y), width * 0.2);
+  context.fill();
+
+  context.strokeStyle = "#efb58b";
+  context.lineWidth = Math.max(2.4, width * 0.17);
+  context.beginPath();
+  context.moveTo(shoulder.x - width * 0.36, shoulder.y + 2);
+  context.lineTo(hip.x - width * 0.08, hip.y - 2);
+  context.moveTo(shoulder.x + width * 0.36, shoulder.y + 2);
+  context.lineTo(hip.x + width * 0.08, hip.y - 2);
+  context.stroke();
+
+  context.beginPath();
+  context.arc(head.x, head.y, headRadius, 0, Math.PI * 2);
+  context.fillStyle = "#d99972";
+  context.fill();
+  context.restore();
+}
+
+function drawGoalkeeper(
+  context: CanvasRenderingContext2D,
+  viewport: Viewport,
+  camera: CameraPose,
+  goalkeeper: GoalkeeperActor,
+  progress: number,
+): void {
+  const dive = Math.max(0, Math.min(1, (progress - 0.18) / 0.58));
+  const eased = dive * dive * (3 - 2 * dive);
+  const xM = goalkeeper.startXM + (goalkeeper.targetXM - goalkeeper.startXM) * eased;
+  const liftM = Math.sin(eased * Math.PI) * Math.min(0.34, Math.abs(goalkeeper.targetXM) * 0.12);
+  const center = projectWorldPoint({ x: xM, y: goalkeeper.centerYM + liftM, z: goalkeeper.zM }, camera, viewport);
+  if (!center) return;
+  const direction = goalkeeper.targetXM === 0 ? 1 : Math.sign(goalkeeper.targetXM);
+  const reach = goalkeeper.reachXM * (0.5 + eased * 0.5);
+  const leftHand = projectWorldPoint({ x: xM - reach * direction, y: goalkeeper.centerYM + 0.2 + liftM, z: goalkeeper.zM }, camera, viewport);
+  const rightHand = projectWorldPoint({ x: xM + reach * direction, y: goalkeeper.centerYM + 0.2 + liftM, z: goalkeeper.zM }, camera, viewport);
+  const feet = projectWorldPoint({ x: xM - direction * 0.18, y: Math.max(0.08, goalkeeper.centerYM - 0.78 + liftM), z: goalkeeper.zM }, camera, viewport);
+  const head = projectWorldPoint({ x: xM + direction * 0.08, y: goalkeeper.centerYM + 0.52 + liftM, z: goalkeeper.zM }, camera, viewport);
+  if (!leftHand || !rightHand || !feet || !head) return;
+  const unit = center.pixelsPerMeter;
+
+  context.save();
+  context.lineCap = "round";
+  context.shadowColor = "rgba(0,0,0,.35)";
+  context.shadowBlur = 5;
+  context.strokeStyle = "#85efc2";
+  context.lineWidth = Math.max(4, unit * 0.16);
+  context.beginPath();
+  context.moveTo(leftHand.x, leftHand.y);
+  context.lineTo(center.x, center.y);
+  context.lineTo(rightHand.x, rightHand.y);
+  context.stroke();
+
+  context.strokeStyle = "#152335";
+  context.lineWidth = Math.max(4, unit * 0.18);
+  context.beginPath();
+  context.moveTo(center.x, center.y + unit * 0.2);
+  context.lineTo(feet.x, feet.y);
+  context.stroke();
+
+  context.fillStyle = "#35c991";
+  context.beginPath();
+  context.ellipse(center.x, center.y, Math.max(4, unit * 0.23), Math.max(7, unit * 0.42), -direction * eased * 0.55, 0, Math.PI * 2);
+  context.fill();
+  context.beginPath();
+  context.arc(head.x, head.y, Math.max(3, unit * 0.12), 0, Math.PI * 2);
+  context.fillStyle = "#d89a72";
+  context.fill();
+  context.fillStyle = "#f4fbff";
+  for (const hand of [leftHand, rightHand]) {
+    context.beginPath();
+    context.arc(hand.x, hand.y, Math.max(2.4, unit * 0.08), 0, Math.PI * 2);
+    context.fill();
+  }
+  context.restore();
+}
+
+function drawActors(
+  context: CanvasRenderingContext2D,
+  viewport: Viewport,
+  camera: CameraPose,
+  actors: SceneActors,
+  progress: number,
+): void {
+  actors.goalkeeper && drawGoalkeeper(context, viewport, camera, actors.goalkeeper, progress);
+  actors.wall.forEach((actor, index) => drawWallPlayer(context, viewport, camera, actor, index));
+}
+
 function drawBall(context: CanvasRenderingContext2D, viewport: Viewport, camera: CameraPose, positionM: Vec3): void {
   const projected = projectWorldPoint(positionM, camera, viewport);
   if (!projected) return;
@@ -287,12 +410,14 @@ function drawScene(
   samples: readonly FlightSample[],
   goalDistanceM: number,
   progress: number,
+  actors: SceneActors,
 ): void {
   context.clearRect(0, 0, viewport.width, viewport.height);
   drawAtmosphere(context, viewport);
   const camera = createGameplayCamera(goalDistanceM, progress);
   drawField(context, viewport, camera, goalDistanceM);
   drawGoal(context, viewport, camera, goalDistanceM);
+  drawActors(context, viewport, camera, actors, progress);
   const current = interpolateFlight(samples, progress);
   drawBall(context, viewport, camera, current.positionM);
 
@@ -310,7 +435,7 @@ function drawScene(
   context.fillRect(0, 0, viewport.width, viewport.height);
 }
 
-export default function StadiumCanvas({ samples, goalDistanceM, replayToken = 0, progress, onFlightComplete }: StadiumCanvasProps) {
+export default function StadiumCanvas({ samples, goalDistanceM, actors = EMPTY_ACTORS, replayToken = 0, progress, onFlightComplete }: StadiumCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sizeRef = useRef<CanvasSize>({ width: 360, height: 500, pixelRatio: 1 });
   const progressRef = useRef(0);
@@ -325,8 +450,8 @@ export default function StadiumCanvas({ samples, goalDistanceM, replayToken = 0,
     if (!context) return;
     const { width, height, pixelRatio } = sizeRef.current;
     context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-    drawScene(context, { width, height }, samples, goalDistanceM, progress);
-  }, [goalDistanceM, samples]);
+    drawScene(context, { width, height }, samples, goalDistanceM, progress, actors);
+  }, [actors, goalDistanceM, samples]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -397,7 +522,7 @@ export default function StadiumCanvas({ samples, goalDistanceM, replayToken = 0,
       ref={canvasRef}
       data-v10-stadium-canvas="true"
       role="img"
-      aria-label="Cancha de fútbol a escala real vista desde detrás del balón"
+      aria-label="Cancha de fútbol a escala real con arco y defensa vistos desde detrás del balón"
       style={{ display: "block", width: "100%", height: "100%", touchAction: "none" }}
     />
   );
