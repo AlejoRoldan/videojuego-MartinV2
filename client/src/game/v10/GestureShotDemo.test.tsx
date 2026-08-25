@@ -6,9 +6,19 @@ import GestureShotDemo from "./GestureShotDemo";
 describe("V10 gesture demo", () => {
   it("renders match missions and adaptive table progression without coordinates", () => {
     const html = renderToStaticMarkup(<GestureShotDemo />);
-    expect(html).toContain("Juega con tu equipo");
-    expect(html).toContain("CAMINO AL 10 · FASE 11");
+    expect(html).toContain("Tiro Libre Matemático");
+    expect(html).toContain("CAMINO AL 10 · FASE 12");
+    expect(html).toContain('data-v12-welcome="true"');
+    expect(html).toContain("APRENDE · REMATA · COMPARTE");
+    expect(html).toContain("JUGAR PARTIDO SOLO");
+    expect(html).toContain("COMPETIR CON AMIGOS");
+    expect(html).toContain("Calcula");
+    expect(html).toContain("Desliza");
+    expect(html).toContain("Curva");
+    expect(html).toContain('data-match-momentum="true"');
+    expect(html).toContain("PRIMER SILBATAZO");
     expect(html).toContain("Abrir juegos con amigos");
+    expect(html).toContain("Abrir menú principal");
     expect(html).toContain("Silenciar sonido");
     expect(html).toContain('data-match-scoreboard="true"');
     expect(html).toContain("Tiro 1/5");

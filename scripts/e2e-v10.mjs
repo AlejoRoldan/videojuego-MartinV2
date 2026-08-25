@@ -158,16 +158,29 @@ try {
 
   const initial = await evaluate(`(() => ({
     text: document.body.innerText,
+    welcome: Boolean(document.querySelector('[data-v12-welcome]')),
     locked: [...document.querySelectorAll('button')].some((button) => button.textContent.includes('🔒') && button.textContent.includes('Tablas 6')),
     overflow: document.documentElement.scrollWidth - innerWidth,
     unnamedButtons: [...document.querySelectorAll('button')].filter((button) => !button.disabled && !(button.getAttribute('aria-label') || button.textContent.trim())).length,
   }))()`);
+  assert(initial.welcome, "Phase 12 welcome did not open for a new player.");
+  assert(initial.text.includes("FASE 12") && initial.text.includes("APRENDE · REMATA · COMPARTE"), "Phase 12 promise is missing.");
+  assert(initial.text.includes("Calcula") && initial.text.includes("Desliza") && initial.text.includes("Curva"), "Three-step tutorial is incomplete.");
+  assert(initial.text.includes("JUGAR PARTIDO SOLO") && initial.text.includes("COMPETIR CON AMIGOS"), "Phase 12 mode choices are missing.");
   assert(initial.text.includes("ACADEMIA DE TABLAS"), "Multiplication academy is missing.");
-  assert(initial.text.includes("FASE 11") && initial.text.includes("Juega con tu equipo"), "Phase 11 social play entry is missing.");
   assert(initial.text.includes("Tiro 1/5") && initial.text.includes("0/2 GOLES"), "Initial match scoreboard is incorrect.");
   assert(initial.locked, "Advanced multiplication tables should start locked.");
   assert(initial.overflow <= 1, `Mobile layout overflows by ${initial.overflow}px.`);
   assert(initial.unnamedButtons === 0, "An enabled button has no accessible name.");
+
+  const soloStarted = await evaluate(`(() => {
+    const button = [...document.querySelectorAll('button')].find((item) => item.textContent.includes('JUGAR PARTIDO SOLO'));
+    if (!button) return false;
+    button.click();
+    return localStorage.getItem('tlm_v12_welcome_seen') === 'true';
+  })()`);
+  assert(soloStarted, "Solo mode did not dismiss and persist the welcome choice.");
+  await waitFor(async () => await evaluate("!document.querySelector('[data-v12-welcome]')"), "Welcome did not close after choosing solo play.");
 
   const muted = await evaluate(`(() => {
     const button = document.querySelector('[aria-label="Silenciar sonido"]');
@@ -274,6 +287,14 @@ try {
   assert(matchResult.text.includes("PARTIDO 7 COMPLETADO"), "Match completion was not announced.");
   assert(matchResult.text.includes("JUGAR REVANCHA"), "Rematch action was not offered.");
   assert(matchResult.mission?.shots?.length === 5, "Final match shot was not persisted.");
+  const sharedMatch = await evaluate(`(() => {
+    const button = [...document.querySelectorAll('button')].find((item) => item.textContent.includes('COMPARTIR MI PARTIDO'));
+    if (!button) return false;
+    button.click();
+    return true;
+  })()`);
+  assert(sharedMatch, "Completed solo match did not offer a share action.");
+  await waitFor(async () => (await evaluate("document.body.innerText")).includes("Resultado copiado"), "Solo match share feedback was not shown.");
   const rematchStarted = await evaluate(`(() => {
     const button = [...document.querySelectorAll('button')].find((item) => item.textContent.includes('JUGAR REVANCHA'));
     if (!button) return false;
@@ -287,13 +308,21 @@ try {
   })()`), "Rematch did not reset the five-shot mission.");
   assert(rematch === true, "Rematch state is inconsistent.");
 
-  const socialLobby = await evaluate(`(() => {
-    const button = document.querySelector('[aria-label="Abrir juegos con amigos"]');
+  const mainMenu = await evaluate(`(() => {
+    const button = document.querySelector('[aria-label="Abrir menú principal"]');
     if (!button) return null;
     button.click();
     return true;
   })()`);
-  assert(socialLobby === true, "The social play entry could not be opened.");
+  assert(mainMenu === true, "The main menu could not be reopened.");
+  await waitFor(async () => await evaluate("Boolean(document.querySelector('[data-v12-welcome]'))"), "Main menu did not reopen the welcome.");
+  const socialLobby = await evaluate(`(() => {
+    const button = [...document.querySelectorAll('[data-v12-welcome] button')].find((item) => item.textContent.includes('COMPETIR CON AMIGOS'));
+    if (!button) return false;
+    button.click();
+    return true;
+  })()`);
+  assert(socialLobby === true, "The social play entry could not be opened from the main menu.");
   await waitFor(async () => await evaluate("Boolean(document.querySelector('[data-lightning-lobby]'))"), "Lightning cup lobby did not open.");
   const lobbyState = await evaluate(`(() => ({
     text: document.body.innerText,
@@ -351,7 +380,7 @@ try {
 
   console.log(JSON.stringify({
     status: "passed",
-    checks: ["mobile layout", "accessible buttons", "sound preference", "match scoreboard", "math answer", "keyboard shot", "round persistence", "match persistence", "reload recovery", "adaptive reinforcement", "V1 migration", "advanced unlock", "unlock announcement", "five-shot completion", "stadium celebration", "rematch", "social lobby", "safe player defaults", "remote room creation", "credential-safe sharing", "remote room exit", "multiplayer turn", "mirrored question", "lightning persistence", "runtime errors", "heap budget"],
+    checks: ["phase 12 welcome", "three-step tutorial", "mode choice persistence", "mobile layout", "accessible buttons", "sound preference", "match scoreboard", "math answer", "keyboard shot", "round persistence", "match persistence", "reload recovery", "adaptive reinforcement", "V1 migration", "advanced unlock", "unlock announcement", "five-shot completion", "stadium celebration", "solo result sharing", "rematch", "main menu", "social lobby", "safe player defaults", "remote room creation", "credential-safe sharing", "remote room exit", "multiplayer turn", "mirrored question", "lightning persistence", "runtime errors", "heap budget"],
     firstRound: firstRound.tracks["tables-2-5"],
     unlocked: { ...unlocked, advancedTrack },
     jsHeapUsed,

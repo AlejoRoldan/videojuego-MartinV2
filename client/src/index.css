@@ -409,6 +409,16 @@
   animation: stadium-confetti 1.35s ease-in both;
 }
 
+/* Phase 12: a short, calm entrance before the first whistle. */
+@keyframes v12-welcome-rise {
+  from { opacity: 0; transform: translateY(16px) scale(.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.v12-welcome-card {
+  animation: v12-welcome-rise 420ms cubic-bezier(.2,.8,.2,1) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .stadium-celebration__piece {
     display: none;
@@ -417,6 +427,10 @@
   .stadium-celebration__pulse {
     animation: none;
     opacity: 0.24;
+  }
+
+  .v12-welcome-card {
+    animation: none;
   }
 }
 

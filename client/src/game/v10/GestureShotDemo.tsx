@@ -78,6 +78,7 @@ import {
   type LiveRoomSession,
   type LiveRoomSnapshot,
 } from "./liveRoom";
+import { createMatchShareText, getMatchMomentum, loadWelcomeSeen, saveWelcomeSeen } from "./experienceV12";
 
 type DemoPhase = "ready" | "flight" | "result";
 
@@ -167,6 +168,7 @@ export default function GestureShotDemo() {
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [stadiumFeedback, setStadiumFeedback] = useState<StadiumFeedback | null>(null);
   const [lightningCup, setLightningCup] = useState<LightningCupV1 | null>(null);
+  const [welcomeOpen, setWelcomeOpen] = useState(true);
   const [socialOpen, setSocialOpen] = useState(false);
   const [playerNames, setPlayerNames] = useState(["Martín", "Amigo 1"]);
   const [invitation, setInvitation] = useState<LightningInvitation | null>(null);
@@ -241,6 +243,7 @@ export default function GestureShotDemo() {
     if (storedLiveSession) {
       setLiveSession(storedLiveSession);
       setLiveRoomCode(storedLiveSession.roomCode);
+      setWelcomeOpen(false);
       setSocialOpen(true);
     }
     const storedCup = loadLightningCup(storage);
@@ -248,12 +251,17 @@ export default function GestureShotDemo() {
       setLightningCup(storedCup);
       setTableTrack(storedCup.track);
       setDefenseMode("keeper");
+      setWelcomeOpen(false);
       questionStartedAtRef.current = performance.now();
     } else if (!storedLiveSession && incomingInvitation) {
       setTableTrack(incomingInvitation.track);
+      setWelcomeOpen(false);
       setSocialOpen(true);
     } else if (!storedLiveSession && incomingRoomCode) {
+      setWelcomeOpen(false);
       setSocialOpen(true);
+    } else if (!storedLiveSession && loadWelcomeSeen(storage)) {
+      setWelcomeOpen(false);
     }
   }, []);
 
@@ -497,7 +505,10 @@ export default function GestureShotDemo() {
     setLiveRoomCode(room.code);
     setTableTrack(room.track);
     setShareUrl("");
-    saveLiveRoomSession(getBrowserStorage(), session);
+    const storage = getBrowserStorage();
+    saveLiveRoomSession(storage, session);
+    saveWelcomeSeen(storage);
+    setWelcomeOpen(false);
     setSocialOpen(true);
   };
 
@@ -609,7 +620,10 @@ export default function GestureShotDemo() {
     if (soundEnabled) sounds.click();
     const cup = createLightningCup(names, { seed, track: invitation?.track ?? tableTrack });
     setLightningCup(cup);
-    saveLightningCup(getBrowserStorage(), cup);
+    const storage = getBrowserStorage();
+    saveLightningCup(storage, cup);
+    saveWelcomeSeen(storage);
+    setWelcomeOpen(false);
     setSocialOpen(false);
     setShareUrl("");
     prepareLightningTurn(cup);
@@ -671,10 +685,52 @@ export default function GestureShotDemo() {
     }
   };
 
+  const startSoloExperience = () => {
+    if (soundEnabled) sounds.click();
+    saveWelcomeSeen(getBrowserStorage());
+    setWelcomeOpen(false);
+    setSocialOpen(false);
+    setShareUrl("");
+    questionStartedAtRef.current = performance.now();
+    setHint(mathSolved ? "Precisión lista: desliza desde el balón hacia el arco" : "Resuelve la multiplicación para habilitar el tiro");
+  };
+
+  const openSocialExperience = () => {
+    if (soundEnabled) sounds.click();
+    saveWelcomeSeen(getBrowserStorage());
+    setWelcomeOpen(false);
+    setSocialOpen(true);
+  };
+
+  const openMainMenu = () => {
+    if (phase === "flight") return;
+    if (soundEnabled) sounds.click();
+    setSocialOpen(false);
+    setWelcomeOpen(true);
+  };
+
+  const copyMatchResult = async () => {
+    const summary = getMatchMissionSummary(matchMission);
+    const result = createMatchShareText({
+      matchNumber: matchMission.matchNumber,
+      stars: summary.stars,
+      goals: summary.goals,
+      firstTryCorrect: summary.firstTryCorrect,
+      origin: window.location.origin,
+    });
+    try {
+      await navigator.clipboard?.writeText(result);
+      setShareUrl("Resultado copiado · listo para retar a tus amigos");
+    } catch {
+      setShareUrl(result);
+    }
+  };
+
   const startRematch = () => {
     const nextMission = startMatchRematch(matchMission);
     setMatchMission(nextMission);
     saveMatchMission(getBrowserStorage(), nextMission);
+    setShareUrl("");
     setFirstTryStreak(0);
     nextChallenge();
     setHint("Nueva misión: completa cinco remates y busca las dos bonificaciones");
@@ -746,12 +802,6 @@ export default function GestureShotDemo() {
       : "Resuelve la multiplicación para habilitar el tiro");
   };
 
-  const leaveDemo = () => {
-    const url = new URL(window.location.href);
-    url.searchParams.delete("v10Demo");
-    window.location.assign(`${url.pathname}${url.search}${url.hash}`);
-  };
-
   const beginGesture = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (phase === "result" || (phase === "flight" && spinApplied)) return;
     if (phase === "ready" && !mathSolved) {
@@ -818,6 +868,8 @@ export default function GestureShotDemo() {
   const currentTrackProgress = savedProgress.tracks[tableTrack];
   const unlockProgress = getAdvancedUnlockProgress(savedProgress.tracks["tables-2-5"]);
   const matchSummary = getMatchMissionSummary(matchMission);
+  const matchMomentum = getMatchMomentum(matchMission.shots.length, firstTryStreak);
+  const hasActiveCompetitiveMatch = Boolean(liveRoom || lightningCup);
   const lightningStandings = lightningCup ? getLightningStandings(lightningCup) : [];
   const activeLightningPlayer = lightningCup ? getActiveLightningPlayer(lightningCup) : null;
   const activeLightningStanding = activeLightningPlayer
@@ -906,13 +958,13 @@ export default function GestureShotDemo() {
 
         <header style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 10, padding: "max(14px, env(safe-area-inset-top, 14px)) 16px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, pointerEvents: "none" }}>
           <div>
-            <div style={{ color: "#ffd166", fontSize: 11, fontWeight: 950, letterSpacing: 1.25 }}>CAMINO AL 10 · FASE 11</div>
-            <h1 style={{ margin: "2px 0 0", fontSize: "clamp(20px, 5.4vw, 28px)", lineHeight: 1, textShadow: "0 2px 10px #000" }}>{liveRoom ? "Sala relámpago" : lightningCup ? "Copa relámpago" : "Juega con tu equipo"}</h1>
+            <div style={{ color: "#ffd166", fontSize: 11, fontWeight: 950, letterSpacing: 1.25 }}>CAMINO AL 10 · FASE 12</div>
+            <h1 style={{ margin: "2px 0 0", fontSize: "clamp(20px, 5.4vw, 28px)", lineHeight: 1, textShadow: "0 2px 10px #000" }}>{liveRoom ? "Sala relámpago" : lightningCup ? "Copa relámpago" : "Tiro Libre Matemático"}</h1>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
             <button onClick={() => setSocialOpen(true)} disabled={phase === "flight"} aria-label="Abrir juegos con amigos" style={{ width: 42, height: 42, borderRadius: 13, border: lightningCup || liveRoom ? "2px solid #ffd166" : "1px solid rgba(255,255,255,.34)", background: lightningCup || liveRoom ? "rgba(255,209,102,.2)" : "rgba(4,15,25,.68)", color: "white", fontSize: 18, fontWeight: 900, backdropFilter: "blur(8px)", pointerEvents: "auto" }}>{liveRoom ? "📡" : "⚡"}</button>
             <button onClick={toggleSound} aria-pressed={soundEnabled} aria-label={soundEnabled ? "Silenciar sonido" : "Activar sonido"} style={{ width: 42, height: 42, borderRadius: 13, border: "1px solid rgba(255,255,255,.34)", background: "rgba(4,15,25,.68)", color: "white", fontSize: 18, fontWeight: 900, backdropFilter: "blur(8px)", pointerEvents: "auto" }}>{soundEnabled ? "🔊" : "🔇"}</button>
-            <button onClick={leaveDemo} aria-label="Cerrar demo V10 y volver al juego" style={{ width: 42, height: 42, borderRadius: 13, border: "1px solid rgba(255,255,255,.34)", background: "rgba(4,15,25,.68)", color: "white", fontSize: 22, fontWeight: 900, backdropFilter: "blur(8px)", pointerEvents: "auto" }}>×</button>
+            <button onClick={openMainMenu} disabled={phase === "flight"} aria-label="Abrir menú principal" style={{ width: 42, height: 42, borderRadius: 13, border: "1px solid rgba(255,255,255,.34)", background: "rgba(4,15,25,.68)", color: "white", fontSize: 20, fontWeight: 900, backdropFilter: "blur(8px)", pointerEvents: "auto" }}>⌂</button>
           </div>
         </header>
 
@@ -927,6 +979,13 @@ export default function GestureShotDemo() {
             </div>
           )}
         </section>
+
+        {!liveRoom && !lightningCup && (
+          <div data-match-momentum="true" aria-label={`${matchMomentum.label}, intensidad ${matchMomentum.intensity} por ciento`} style={{ position: "absolute", top: "16.2%", left: "50%", zIndex: 12, width: "min(68%, 290px)", transform: "translateX(-50%)", pointerEvents: "none" }}>
+            <div style={{ padding: "3px 8px 4px", borderRadius: 999, background: "rgba(3,14,23,.82)", border: `1px solid ${matchMomentum.accent}`, color: matchMomentum.accent, fontSize: 8.5, fontWeight: 950, letterSpacing: .65, textAlign: "center", boxShadow: `0 0 ${8 + Math.round(matchMomentum.intensity / 5)}px ${matchMomentum.accent}33`, backdropFilter: "blur(8px)" }}>{matchMomentum.label}</div>
+            <div aria-hidden="true" style={{ width: "84%", height: 2, margin: "2px auto 0", overflow: "hidden", borderRadius: 99, background: "rgba(255,255,255,.12)" }}><div style={{ width: `${matchMomentum.intensity}%`, height: "100%", borderRadius: 99, background: matchMomentum.accent, transition: "width .25s ease" }} /></div>
+          </div>
+        )}
 
         {liveRoom && myLivePlayer ? (
           <div data-live-room-scoreboard="true" aria-label={`Sala ${liveRoom.code}: ${myLivePlayer.nickname}, remate ${Math.min(liveRoom.shotsPerPlayer, myLivePlayer.shotsCompleted + 1)} de ${liveRoom.shotsPerPlayer}`} style={{ position: "absolute", top: "18.5%", left: 14, right: 14, zIndex: 11, display: "grid", gridTemplateColumns: "1.25fr 1fr 1fr", gap: 6, pointerEvents: "none" }}>
@@ -1028,7 +1087,7 @@ export default function GestureShotDemo() {
         )}
 
         {phase === "result" && !liveRoom && !lightningCup && matchSummary.completed && (
-          <section data-match-summary="true" role="status" style={{ position: "absolute", top: "27%", left: "50%", transform: "translateX(-50%)", zIndex: 12, width: "min(86%, 380px)", padding: "18px 18px 17px", textAlign: "center", borderRadius: 22, background: "rgba(3,13,20,.94)", border: "2px solid #ffd166", boxShadow: "0 0 38px rgba(255,209,102,.32)", backdropFilter: "blur(12px)", pointerEvents: "none" }}>
+          <section data-match-summary="true" role="status" style={{ position: "absolute", top: "25%", left: "50%", transform: "translateX(-50%)", zIndex: 12, width: "min(86%, 380px)", padding: "18px 18px 17px", textAlign: "center", borderRadius: 22, background: "rgba(3,13,20,.94)", border: "2px solid #ffd166", boxShadow: "0 0 38px rgba(255,209,102,.32)", backdropFilter: "blur(12px)", pointerEvents: "auto" }}>
             <span style={{ display: "block", color: "#72f2a1", fontSize: 10, fontWeight: 950, letterSpacing: 1.35 }}>PARTIDO {matchMission.matchNumber} COMPLETADO</span>
             <strong style={{ display: "block", marginTop: 5, color: "#ffd166", fontSize: 31, lineHeight: 1 }} aria-label={`${matchSummary.stars} de 3 estrellas`}>{"★".repeat(matchSummary.stars)}<span style={{ color: "rgba(255,255,255,.24)" }}>{"★".repeat(3 - matchSummary.stars)}</span></strong>
             <span style={{ display: "block", marginTop: 9, fontSize: 14, fontWeight: 900 }}>{matchSummary.message}</span>
@@ -1037,6 +1096,8 @@ export default function GestureShotDemo() {
               <span style={{ padding: 9, borderRadius: 12, background: matchSummary.goalBonusReached ? "rgba(114,242,161,.15)" : "rgba(255,255,255,.07)", border: `1px solid ${matchSummary.goalBonusReached ? "#72f2a1" : "rgba(255,255,255,.16)"}`, fontSize: 11, fontWeight: 950 }}>⚽ {matchSummary.goals} GOLES<br /><small>{matchSummary.goalBonusReached ? "BONUS LOGRADO" : `META ${MATCH_GOAL_BONUS}`}</small></span>
               <span style={{ padding: 9, borderRadius: 12, background: matchSummary.mathBonusReached ? "rgba(255,209,102,.15)" : "rgba(255,255,255,.07)", border: `1px solid ${matchSummary.mathBonusReached ? "#ffd166" : "rgba(255,255,255,.16)"}`, fontSize: 11, fontWeight: 950 }}>🎯 {matchSummary.firstTryCorrect} A LA PRIMERA<br /><small>{matchSummary.mathBonusReached ? "BONUS LOGRADO" : `META ${MATCH_MATH_BONUS}`}</small></span>
             </div>
+            <button type="button" onClick={copyMatchResult} style={{ width: "100%", minHeight: 40, marginTop: 11, borderRadius: 12, border: "1px solid rgba(104,199,255,.5)", background: "rgba(104,199,255,.14)", color: "#bfe7ff", fontSize: 11, fontWeight: 950 }}>🔗 COMPARTIR MI PARTIDO</button>
+            {shareUrl && <p aria-live="polite" style={{ margin: "8px 0 0", color: "#d7e8df", fontSize: 10, overflowWrap: "anywhere" }}>{shareUrl}</p>}
           </section>
         )}
 
@@ -1076,12 +1137,47 @@ export default function GestureShotDemo() {
           </section>
         )}
 
+        {welcomeOpen && (
+          <section data-v12-welcome="true" role="dialog" aria-modal="true" aria-labelledby="v12-welcome-title" style={{ position: "absolute", inset: 0, zIndex: 40, display: "grid", alignContent: "center", padding: "max(18px, env(safe-area-inset-top, 18px)) 16px max(18px, env(safe-area-inset-bottom, 18px))", background: "radial-gradient(circle at 50% 18%, rgba(16,99,84,.45), transparent 36%), linear-gradient(180deg, rgba(2,8,17,.94), rgba(3,18,24,.985))", backdropFilter: "blur(15px)", pointerEvents: "auto", overflowY: "auto" }}>
+            <div className="v12-welcome-card" style={{ width: "100%", maxWidth: 440, margin: "0 auto", padding: "18px", borderRadius: 26, border: "2px solid rgba(255,209,102,.78)", background: "linear-gradient(160deg, rgba(9,41,42,.97), rgba(5,23,32,.98))", boxShadow: "0 24px 80px rgba(0,0,0,.55), 0 0 42px rgba(255,209,102,.12)" }}>
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+                <div>
+                  <span style={{ color: "#72f2a1", fontSize: 9.5, fontWeight: 950, letterSpacing: 1.25 }}>FASE 12 · EXPERIENCIA COMPLETA</span>
+                  <h2 id="v12-welcome-title" style={{ margin: "4px 0 0", color: "#ffd166", fontSize: "clamp(27px, 8vw, 35px)", lineHeight: .98 }}>Tiro Libre<br />Matemático</h2>
+                </div>
+                <button type="button" onClick={() => setWelcomeOpen(false)} aria-label="Cerrar menú principal" style={{ width: 40, height: 40, flex: "0 0 auto", borderRadius: 12, border: "1px solid rgba(255,255,255,.3)", background: "rgba(255,255,255,.08)", color: "white", fontSize: 22, fontWeight: 950 }}>×</button>
+              </div>
+              <p style={{ margin: "9px 0 12px", color: "#e8f3ed", fontSize: 14, fontWeight: 900 }}>APRENDE · REMATA · COMPARTE</p>
+              <div aria-label="Cómo jugar" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 7 }}>
+                {[["1", "Calcula", "Resuelve la tabla"], ["2", "Desliza", "Elige fuerza y dirección"], ["3", "Curva", "Sorprende al arquero"]].map(([step, title, detail]) => (
+                  <div key={step} style={{ minHeight: 86, padding: "9px 7px", borderRadius: 14, background: "rgba(255,255,255,.07)", border: "1px solid rgba(255,255,255,.15)", textAlign: "center" }}>
+                    <span style={{ display: "grid", width: 23, height: 23, margin: "0 auto 5px", placeItems: "center", borderRadius: 99, background: "#ffd166", color: "#16201b", fontSize: 11, fontWeight: 950 }}>{step}</span>
+                    <strong style={{ display: "block", color: "white", fontSize: 11 }}>{title}</strong>
+                    <small style={{ display: "block", marginTop: 3, color: "#b9cbc2", fontSize: 8.5, lineHeight: 1.25 }}>{detail}</small>
+                  </div>
+                ))}
+              </div>
+              <div style={{ marginTop: 10, padding: "10px 11px", borderRadius: 14, background: "rgba(114,242,161,.08)", border: "1px solid rgba(114,242,161,.28)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, color: "#cfe0d8", fontSize: 9.5, fontWeight: 900 }}><span>Tu camino: {MASTERY_LABELS[currentTrackProgress.mastery]}</span><span>Tablas 6–9 · {unlockProgress}%</span></div>
+                <div aria-hidden="true" style={{ height: 5, marginTop: 6, overflow: "hidden", borderRadius: 99, background: "rgba(255,255,255,.12)" }}><div style={{ width: `${unlockProgress}%`, height: "100%", borderRadius: 99, background: "linear-gradient(90deg, #72f2a1, #ffd166)" }} /></div>
+              </div>
+              {hasActiveCompetitiveMatch ? (
+                <button type="button" onClick={() => setWelcomeOpen(false)} style={{ width: "100%", minHeight: 51, marginTop: 12, borderRadius: 15, border: "2px solid rgba(255,255,255,.38)", background: "linear-gradient(180deg, #ff7a3d, #dd451f)", color: "white", fontSize: 15, fontWeight: 950 }}>CONTINUAR PARTIDO</button>
+              ) : (
+                <button type="button" onClick={startSoloExperience} style={{ width: "100%", minHeight: 51, marginTop: 12, borderRadius: 15, border: "2px solid rgba(255,255,255,.38)", background: "linear-gradient(180deg, #35c76e, #168746)", color: "white", fontSize: 15, fontWeight: 950, boxShadow: "0 8px 24px rgba(22,135,70,.3)" }}>⚽ JUGAR PARTIDO SOLO</button>
+              )}
+              <button type="button" onClick={openSocialExperience} style={{ width: "100%", minHeight: 44, marginTop: 8, borderRadius: 13, border: "1px solid rgba(104,199,255,.5)", background: "rgba(104,199,255,.12)", color: "#bfe7ff", fontSize: 12, fontWeight: 950 }}>⚡ COMPETIR CON AMIGOS</button>
+              <p style={{ margin: "8px 2px 0", color: "#9fb3aa", fontSize: 9, lineHeight: 1.35, textAlign: "center" }}>Copa local · sala en vivo · reto por enlace<br />Sin chat, cuentas, anuncios ni ubicación.</p>
+            </div>
+          </section>
+        )}
+
         {socialOpen && (
           <section data-social-lobby="true" data-lightning-lobby="true" role="dialog" aria-modal="true" aria-labelledby="lightning-title" style={{ position: "absolute", inset: 0, zIndex: 30, display: "grid", alignContent: "center", padding: "max(20px, env(safe-area-inset-top, 20px)) 16px max(20px, env(safe-area-inset-bottom, 20px))", background: "linear-gradient(180deg, rgba(2,8,17,.92), rgba(3,18,24,.97))", backdropFilter: "blur(14px)", pointerEvents: "auto", overflowY: "auto" }}>
             <div style={{ width: "100%", maxWidth: 430, margin: "0 auto", padding: "19px", borderRadius: 25, border: "2px solid rgba(255,209,102,.72)", background: "rgba(7,29,35,.96)", boxShadow: "0 20px 70px rgba(0,0,0,.48)" }}>
               <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
                 <div>
-                  <span style={{ color: "#72f2a1", fontSize: 10, fontWeight: 950, letterSpacing: 1.3 }}>FASE 11 · SALAS REMOTAS SEGURAS</span>
+                  <span style={{ color: "#72f2a1", fontSize: 10, fontWeight: 950, letterSpacing: 1.3 }}>FASE 12 · COMPETENCIA SEGURA</span>
                   <h2 id="lightning-title" style={{ margin: "4px 0 0", color: "#ffd166", fontSize: 27, lineHeight: 1 }}>{liveRoom ? "📡 Sala relámpago" : "⚡ Juega con amigos"}</h2>
                 </div>
                 <button type="button" onClick={() => setSocialOpen(false)} aria-label="Cerrar juegos con amigos" style={{ width: 40, height: 40, flex: "0 0 auto", borderRadius: 12, border: "1px solid rgba(255,255,255,.3)", background: "rgba(255,255,255,.08)", color: "white", fontSize: 22, fontWeight: 950 }}>×</button>
