@@ -8,7 +8,7 @@ import {
   type ResolvedFootballShot,
 } from "./footballCollisions";
 import { continueFlightWithSpin, createInteractiveShotConfig } from "./midFlightSpin";
-import { selectAdaptiveMultiplicationChallenge, type AdaptivePracticeMode } from "./adaptiveMultiplication";
+import { selectAdaptiveMultiplicationChallenge } from "./adaptiveMultiplication";
 import {
   MATCH_GOAL_BONUS,
   MATCH_MATH_BONUS,
@@ -23,20 +23,15 @@ import {
 } from "./matchMission";
 import {
   createDefaultMultiplicationProgress,
-  getAdvancedUnlockProgress,
   loadMultiplicationProgress,
   recordCompletedMultiplicationRound,
   saveMultiplicationProgress,
   type MultiplicationProgressV2,
   type TrackMasteryLevel,
 } from "./multiplicationProgress";
-import {
-  MULTIPLICATION_TRACKS,
-  evaluateMultiplicationAnswer,
-  type MultiplicationTrack,
-} from "./multiplicationRound";
+import { evaluateMultiplicationAnswer, type MultiplicationTrack } from "./multiplicationRound";
 import { curveFromSwipe, getForceBand, launchFromSwipe, type GesturePoint, type LaunchGesture } from "./shotGesture";
-import { simulateShot, type ShotPhysicsConfig, type ShotPhysicsResult } from "./shotPhysics3d";
+import { simulateShot, velocityFromAngles, type ShotPhysicsConfig, type ShotPhysicsResult } from "./shotPhysics3d";
 import {
   getStadiumFeedback,
   loadSoundPreference,
@@ -79,6 +74,24 @@ import {
   type LiveRoomSnapshot,
 } from "./liveRoom";
 import { createMatchShareText, getMatchMomentum, loadWelcomeSeen, saveWelcomeSeen } from "./experienceV12";
+import {
+  CAMPAIGN_STAGES,
+  createCampaignChallenge,
+  createCampaignProgress,
+  getCampaignCompletionPercent,
+  getCampaignStage,
+  getCampaignTotalStars,
+  getNextCampaignStage,
+  getStageAimOffsetDegrees,
+  isCampaignStageUnlocked,
+  loadCampaignProgress,
+  recordCampaignMatch,
+  saveCampaignProgress,
+  selectCampaignStage,
+  type CampaignProgressV1,
+  type CampaignStage,
+  type CampaignStageId,
+} from "./campaignProgress";
 
 type DemoPhase = "ready" | "flight" | "result";
 
@@ -90,8 +103,30 @@ interface DragState {
   viewport: { width: number; height: number };
 }
 
-const GOAL_DISTANCE_M = 18.3;
-const DEFAULT_CONFIG = createInteractiveShotConfig(24, 17, 0, GOAL_DISTANCE_M);
+function createStageShotConfig(speedMps: number, elevationDegrees: number, yawDegrees: number, stage: CampaignStage): ShotPhysicsConfig {
+  const aimedYaw = yawDegrees + getStageAimOffsetDegrees(stage);
+  const config = createInteractiveShotConfig(speedMps, elevationDegrees, aimedYaw, stage.distanceM);
+  return {
+    ...config,
+    initialPositionM: { ...config.initialPositionM, x: stage.startXM },
+    initialVelocityMps: velocityFromAngles(speedMps, elevationDegrees, aimedYaw),
+  };
+}
+
+const DEFAULT_STAGE = CAMPAIGN_STAGES[0];
+const COMPETITIVE_STAGE: CampaignStage = {
+  ...CAMPAIGN_STAGES[1],
+  name: "Arena relámpago",
+  competition: "Mismas condiciones",
+  distanceM: 18.3,
+  startXM: 0,
+  positionLabel: "Frontal",
+  defense: "keeper",
+  defenseLabel: "Arquero",
+  technicalSkill: "Precisión",
+  theme: "night",
+};
+const DEFAULT_CONFIG = createStageShotConfig(24, 17, 0, DEFAULT_STAGE);
 const CELEBRATION_PIECES = Array.from({ length: 14 }, (_, index) => ({
   left: `${5 + ((index * 31) % 90)}%`,
   delay: `${(index % 5) * 70}ms`,
@@ -103,13 +138,6 @@ const MASTERY_LABELS: Record<TrackMasteryLevel, string> = {
   practicing: "Practicando",
   mastering: "Dominando",
   mastered: "Dominada",
-};
-
-const ADAPTIVE_MODE_LABELS: Record<AdaptivePracticeMode, string> = {
-  explore: "Explorando",
-  reinforce: "Reforzando",
-  balance: "Equilibrando",
-  challenge: "Desafío",
 };
 
 function getBrowserStorage(): Storage | null {
@@ -130,12 +158,6 @@ function getResultCopy(outcome: FootballOutcome) {
   if (outcome === "miss") return { title: "¡Afuera!", detail: "Reduce la dirección lateral o la altura.", accent: "#ff9f68" };
   return { title: "Faltó fuerza", detail: "Desliza más rápido hacia el arco.", accent: "#ff8b8b" };
 }
-
-const DEFENSE_OPTIONS: { mode: DefenseMode; label: string }[] = [
-  { mode: "open", label: "Arco libre" },
-  { mode: "wall", label: "Barrera" },
-  { mode: "keeper", label: "Arquero" },
-];
 
 function getForceCopy(launch: LaunchGesture | null): string {
   if (!launch) return "Sin patear";
@@ -165,6 +187,8 @@ export default function GestureShotDemo() {
   const [defenseMode, setDefenseMode] = useState<DefenseMode>("open");
   const [savedProgress, setSavedProgress] = useState<MultiplicationProgressV2>(() => createDefaultMultiplicationProgress());
   const [matchMission, setMatchMission] = useState<MatchMissionV1>(() => createMatchMission());
+  const [campaignProgress, setCampaignProgress] = useState<CampaignProgressV1>(() => createCampaignProgress());
+  const [campaignOpen, setCampaignOpen] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [stadiumFeedback, setStadiumFeedback] = useState<StadiumFeedback | null>(null);
   const [lightningCup, setLightningCup] = useState<LightningCupV1 | null>(null);
@@ -180,6 +204,7 @@ export default function GestureShotDemo() {
   const [liveError, setLiveError] = useState("");
   const [remoteSubmitState, setRemoteSubmitState] = useState<"idle" | "submitting" | "saved" | "error">("idle");
   const [tableTrack, setTableTrack] = useState<MultiplicationTrack>("tables-2-5");
+  const currentStage = getCampaignStage(campaignProgress.currentStageId);
   const adaptiveSelection = useMemo(
     () => selectAdaptiveMultiplicationChallenge(savedProgress, tableTrack),
     [savedProgress, tableTrack],
@@ -187,8 +212,8 @@ export default function GestureShotDemo() {
   const challenge = useMemo(() => {
     if (liveRoom && liveSession && liveRoom.status !== "waiting") return getLiveRoomChallenge(liveRoom, liveSession.playerId);
     if (lightningCup) return getLightningChallenge(lightningCup);
-    return adaptiveSelection.challenge;
-  }, [adaptiveSelection.challenge, lightningCup, liveRoom, liveSession]);
+    return createCampaignChallenge(currentStage, savedProgress.tracks["tables-2-5"].roundsCompleted);
+  }, [adaptiveSelection.challenge, currentStage, lightningCup, liveRoom, liveSession, savedProgress.tracks]);
   const [mathSolved, setMathSolved] = useState(false);
   const [mathAttempts, setMathAttempts] = useState(0);
   const [mathFeedback, setMathFeedback] = useState("Resuelve para habilitar el remate");
@@ -225,7 +250,18 @@ export default function GestureShotDemo() {
     const storage = getBrowserStorage();
     const loaded = loadMultiplicationProgress(storage);
     setSavedProgress(loaded);
-    setTableTrack(loaded.activeTrack);
+    setTableTrack("tables-2-5");
+    const loadedCampaign = loadCampaignProgress(storage);
+    const loadedStage = getCampaignStage(loadedCampaign.currentStageId);
+    const stageConfig = createStageShotConfig(24, 17, 0, loadedStage);
+    const stagePhysics = simulateShot(stageConfig);
+    const stageResolved = resolveFootballShot(stagePhysics, loadedStage.defense, stageConfig.goal);
+    setCampaignProgress(loadedCampaign);
+    setDefenseMode(loadedStage.defense);
+    setResolvedShot(stageResolved);
+    physicsResultRef.current = stagePhysics;
+    resolvedRef.current = stageResolved;
+    configRef.current = stageConfig;
     const loadedMission = loadMatchMission(storage);
     const resumableMission = getMatchMissionSummary(loadedMission).completed
       ? startMatchRematch(loadedMission)
@@ -375,15 +411,23 @@ export default function GestureShotDemo() {
       });
       setMatchMission(updatedMission);
       saveMatchMission(getBrowserStorage(), updatedMission);
+      const updatedSummary = getMatchMissionSummary(updatedMission);
+      if (updatedSummary.completed) {
+        const updatedCampaign = recordCampaignMatch(campaignProgress, currentStage.id, updatedSummary.stars);
+        setCampaignProgress(updatedCampaign);
+        saveCampaignProgress(getBrowserStorage(), updatedCampaign);
+      }
       const feedback = getStadiumFeedback(resolvedRef.current.outcome, {
-        matchCompleted: getMatchMissionSummary(updatedMission).completed,
+        matchCompleted: updatedSummary.completed,
         advancedUnlocked: recorded.justUnlockedAdvanced,
       });
       setStadiumFeedback(feedback);
       playStadiumCue(feedback.audioCue, soundEnabledRef.current);
       setJustUnlockedAdvanced(recorded.justUnlockedAdvanced);
       setPhase("result");
-      setHint(recorded.justUnlockedAdvanced ? "¡Tablas 6–9 desbloqueadas por tu progreso!" : "Observa el resultado de tu gesto");
+      setHint(updatedSummary.completed
+        ? `¡${currentStage.name} superada! Tu camino continúa`
+        : recorded.justUnlockedAdvanced ? "¡Tablas 6–9 desbloqueadas por tu progreso!" : "Observa el resultado de tu gesto");
     }
   };
 
@@ -428,12 +472,14 @@ export default function GestureShotDemo() {
     setHint(direction === "right" ? "Efecto aplicado hacia la derecha" : "Efecto aplicado hacia la izquierda");
   };
 
-  const restorePhysicalPreview = (mode: DefenseMode) => {
+  const restorePhysicalPreview = (mode: DefenseMode, stage: CampaignStage = currentStage) => {
     stopAnimation();
-    const nextResolved = resolveFootballShot(initialPhysicsResult, mode, DEFAULT_CONFIG.goal);
-    physicsResultRef.current = initialPhysicsResult;
+    const previewConfig = createStageShotConfig(24, 17, 0, stage);
+    const previewPhysics = simulateShot(previewConfig);
+    const nextResolved = resolveFootballShot(previewPhysics, mode, previewConfig.goal);
+    physicsResultRef.current = previewPhysics;
     resolvedRef.current = nextResolved;
-    configRef.current = DEFAULT_CONFIG;
+    configRef.current = previewConfig;
     elapsedPhysicsSecondsRef.current = 0;
     setResolvedShot(nextResolved);
     setPhase("ready");
@@ -446,7 +492,8 @@ export default function GestureShotDemo() {
 
   const nextChallenge = () => {
     if (soundEnabled) sounds.click();
-    restorePhysicalPreview(defenseMode);
+    setDefenseMode(currentStage.defense);
+    restorePhysicalPreview(currentStage.defense, currentStage);
     setMathSolved(false);
     setMathAttempts(0);
     setSelectedAnswer(null);
@@ -459,7 +506,7 @@ export default function GestureShotDemo() {
   };
 
   const prepareLightningTurn = (cup: LightningCupV1) => {
-    restorePhysicalPreview("keeper");
+    restorePhysicalPreview("keeper", COMPETITIVE_STAGE);
     setDefenseMode("keeper");
     setTableTrack(cup.track);
     setMathSolved(false);
@@ -480,7 +527,7 @@ export default function GestureShotDemo() {
       setSocialOpen(true);
       return;
     }
-    restorePhysicalPreview("keeper");
+    restorePhysicalPreview("keeper", COMPETITIVE_STAGE);
     setDefenseMode("keeper");
     setTableTrack(room.track);
     setMathSolved(false);
@@ -579,7 +626,7 @@ export default function GestureShotDemo() {
     setRemoteSubmitState("idle");
     pendingRemoteShotRef.current = null;
     previousLiveStatusRef.current = null;
-    restorePhysicalPreview("open");
+    restorePhysicalPreview(currentStage.defense, currentStage);
     setDefenseMode("open");
     setSocialOpen(true);
     const url = new URL(window.location.href);
@@ -661,7 +708,7 @@ export default function GestureShotDemo() {
     setInvitation(null);
     setShareUrl("");
     setSocialOpen(true);
-    restorePhysicalPreview("open");
+    restorePhysicalPreview(currentStage.defense, currentStage);
     setDefenseMode("open");
     const url = new URL(window.location.href);
     url.searchParams.delete("lightning");
@@ -690,7 +737,16 @@ export default function GestureShotDemo() {
     saveWelcomeSeen(getBrowserStorage());
     setWelcomeOpen(false);
     setSocialOpen(false);
+    setCampaignOpen(false);
     setShareUrl("");
+    setTableTrack("tables-2-5");
+    setDefenseMode(currentStage.defense);
+    restorePhysicalPreview(currentStage.defense, currentStage);
+    if (getMatchMissionSummary(matchMission).completed) {
+      const nextMission = startMatchRematch(matchMission);
+      setMatchMission(nextMission);
+      saveMatchMission(getBrowserStorage(), nextMission);
+    }
     questionStartedAtRef.current = performance.now();
     setHint(mathSolved ? "Precisión lista: desliza desde el balón hacia el arco" : "Resuelve la multiplicación para habilitar el tiro");
   };
@@ -699,6 +755,7 @@ export default function GestureShotDemo() {
     if (soundEnabled) sounds.click();
     saveWelcomeSeen(getBrowserStorage());
     setWelcomeOpen(false);
+    setCampaignOpen(false);
     setSocialOpen(true);
   };
 
@@ -706,6 +763,7 @@ export default function GestureShotDemo() {
     if (phase === "flight") return;
     if (soundEnabled) sounds.click();
     setSocialOpen(false);
+    setCampaignOpen(false);
     setWelcomeOpen(true);
   };
 
@@ -736,6 +794,45 @@ export default function GestureShotDemo() {
     setHint("Nueva misión: completa cinco remates y busca las dos bonificaciones");
   };
 
+  const enterCampaignStage = (stageId: CampaignStageId) => {
+    if (phase === "flight" || !isCampaignStageUnlocked(campaignProgress, stageId)) return;
+    const stage = getCampaignStage(stageId);
+    if (stageId === currentStage.id && !getMatchMissionSummary(matchMission).completed) {
+      setCampaignOpen(false);
+      setWelcomeOpen(false);
+      setHint(`${stage.competition} · continúa tu partido`);
+      return;
+    }
+    const selectedCampaign = selectCampaignStage(campaignProgress, stageId);
+    const nextMission = matchMission.shots.length === 0 && !getMatchMissionSummary(matchMission).completed
+      ? matchMission
+      : startMatchRematch(matchMission);
+    setCampaignProgress(selectedCampaign);
+    saveCampaignProgress(getBrowserStorage(), selectedCampaign);
+    setMatchMission(nextMission);
+    saveMatchMission(getBrowserStorage(), nextMission);
+    setTableTrack("tables-2-5");
+    setDefenseMode(stage.defense);
+    restorePhysicalPreview(stage.defense, stage);
+    setMathSolved(false);
+    setMathAttempts(0);
+    setSelectedAnswer(null);
+    setRoundFirstTry(null);
+    setFirstTryStreak(0);
+    setMathFeedback("Resuelve para habilitar el remate");
+    setShareUrl("");
+    setCampaignOpen(false);
+    setWelcomeOpen(false);
+    questionStartedAtRef.current = performance.now();
+    setHint(`${stage.competition} · ${stage.objective}`);
+  };
+
+  const advanceCampaign = () => {
+    const nextStage = getNextCampaignStage(currentStage.id);
+    if (nextStage && isCampaignStageUnlocked(campaignProgress, nextStage.id)) enterCampaignStage(nextStage.id);
+    else startRematch();
+  };
+
   const toggleSound = () => {
     const nextEnabled = !soundEnabled;
     if (nextEnabled) {
@@ -747,27 +844,6 @@ export default function GestureShotDemo() {
     soundEnabledRef.current = nextEnabled;
     setSoundEnabled(nextEnabled);
     saveSoundPreference(getBrowserStorage(), nextEnabled);
-  };
-
-  const selectTableTrack = (track: MultiplicationTrack) => {
-    if (phase === "flight" || lightningCup || liveRoom) return;
-    if (track === "tables-6-9" && !savedProgress.advancedUnlocked) {
-      setMathFeedback("Completa el camino de tablas 2–5 para desbloquear este reto");
-      setHint("Las tablas 6–9 todavía están bloqueadas");
-      return;
-    }
-    const nextProgress = { ...savedProgress, activeTrack: track };
-    setSavedProgress(nextProgress);
-    saveMultiplicationProgress(getBrowserStorage(), nextProgress);
-    restorePhysicalPreview(defenseMode);
-    setTableTrack(track);
-    setMathSolved(false);
-    setMathAttempts(0);
-    setSelectedAnswer(null);
-    setRoundFirstTry(null);
-    setFirstTryStreak(0);
-    setMathFeedback("Resuelve para habilitar el remate");
-    setHint(`Comienza con ${MULTIPLICATION_TRACKS[track].label.toLowerCase()}`);
   };
 
   const answerMath = (answer: number) => {
@@ -790,16 +866,6 @@ export default function GestureShotDemo() {
       setFirstTryStreak(0);
       setHint("Casi: usa la ayuda y vuelve a intentarlo");
     }
-  };
-
-  const selectDefense = (mode: DefenseMode) => {
-    if (phase !== "ready" || lightningCup || liveRoom) return;
-    if (soundEnabled) sounds.click();
-    restorePhysicalPreview(mode);
-    setDefenseMode(mode);
-    setHint(mathSolved
-      ? mode === "wall" ? "Precisión lista: supera la barrera" : mode === "keeper" ? "Precisión lista: busca un rincón" : "Precisión lista: desliza hacia el arco"
-      : "Resuelve la multiplicación para habilitar el tiro");
   };
 
   const beginGesture = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -844,7 +910,8 @@ export default function GestureShotDemo() {
       if (!mapped.valid) {
         setHint(mapped.reason === "must_swipe_up" ? "Desliza hacia arriba para levantar el balón" : "Haz un gesto un poco más largo");
       } else {
-        const config = createInteractiveShotConfig(mapped.speedMps, mapped.elevationDegrees, mapped.yawDegrees, GOAL_DISTANCE_M);
+        const shotStage = liveRoom || lightningCup ? COMPETITIVE_STAGE : currentStage;
+        const config = createStageShotConfig(mapped.speedMps, mapped.elevationDegrees, mapped.yawDegrees, shotStage);
         startFlight(simulateShot(config), config, mapped);
       }
     } else {
@@ -866,10 +933,13 @@ export default function GestureShotDemo() {
   const resultCopy = getResultCopy(resolvedShot.outcome);
   const gestureColor = drag?.mode === "curve" ? "#c89bff" : "#ffbd59";
   const currentTrackProgress = savedProgress.tracks[tableTrack];
-  const unlockProgress = getAdvancedUnlockProgress(savedProgress.tracks["tables-2-5"]);
   const matchSummary = getMatchMissionSummary(matchMission);
   const matchMomentum = getMatchMomentum(matchMission.shots.length, firstTryStreak);
   const hasActiveCompetitiveMatch = Boolean(liveRoom || lightningCup);
+  const activeShotStage = hasActiveCompetitiveMatch ? COMPETITIVE_STAGE : currentStage;
+  const campaignTotalStars = getCampaignTotalStars(campaignProgress);
+  const campaignCompletion = getCampaignCompletionPercent(campaignProgress);
+  const nextCampaignStage = getNextCampaignStage(currentStage.id);
   const lightningStandings = lightningCup ? getLightningStandings(lightningCup) : [];
   const activeLightningPlayer = lightningCup ? getActiveLightningPlayer(lightningCup) : null;
   const activeLightningStanding = activeLightningPlayer
@@ -889,7 +959,7 @@ export default function GestureShotDemo() {
       style={{ position: "fixed", inset: 0, width: "100%", minHeight: "100dvh", overflow: "hidden", background: "#06111a", color: "white", fontFamily: "Nunito, sans-serif" }}
     >
       <div style={{ width: "100%", height: "100dvh", maxWidth: 560, margin: "0 auto", position: "relative", overflow: "hidden", background: "#0d3824" }}>
-        <StadiumCanvas samples={resolvedShot.displaySamples} goalDistanceM={GOAL_DISTANCE_M} actors={resolvedShot.actors} progress={progress} />
+        <StadiumCanvas samples={resolvedShot.displaySamples} goalDistanceM={activeShotStage.distanceM} actors={resolvedShot.actors} progress={progress} theme={activeShotStage.theme} />
         <div aria-hidden="true" style={{ position: "absolute", inset: 0, pointerEvents: "none", background: "linear-gradient(180deg, rgba(1,8,18,.72) 0%, transparent 24%, transparent 63%, rgba(1,8,16,.9) 100%)" }} />
 
         {stadiumFeedback && stadiumFeedback.celebration !== "none" && (
@@ -922,7 +992,8 @@ export default function GestureShotDemo() {
                 { x: 200, y: 230, timeMs: 360 },
                 { width: 400, height: 600 },
               );
-              const config = createInteractiveShotConfig(keyboardLaunch.speedMps, keyboardLaunch.elevationDegrees, keyboardLaunch.yawDegrees, GOAL_DISTANCE_M);
+              const shotStage = liveRoom || lightningCup ? COMPETITIVE_STAGE : currentStage;
+              const config = createStageShotConfig(keyboardLaunch.speedMps, keyboardLaunch.elevationDegrees, keyboardLaunch.yawDegrees, shotStage);
               startFlight(simulateShot(config), config, keyboardLaunch);
             } else if (phase === "flight" && event.key === "ArrowLeft") {
               event.preventDefault();
@@ -936,7 +1007,7 @@ export default function GestureShotDemo() {
               else if (lightningCup) {
                 if (lightningCup.status === "completed") setSocialOpen(true);
                 else continueLightningCup();
-              } else if (matchSummary.completed) startRematch();
+              } else if (matchSummary.completed) advanceCampaign();
               else nextChallenge();
             }
           }}
@@ -958,8 +1029,8 @@ export default function GestureShotDemo() {
 
         <header style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 10, padding: "max(14px, env(safe-area-inset-top, 14px)) 16px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, pointerEvents: "none" }}>
           <div>
-            <div style={{ color: "#ffd166", fontSize: 11, fontWeight: 950, letterSpacing: 1.25 }}>CAMINO AL 10 · FASE 12</div>
-            <h1 style={{ margin: "2px 0 0", fontSize: "clamp(20px, 5.4vw, 28px)", lineHeight: 1, textShadow: "0 2px 10px #000" }}>{liveRoom ? "Sala relámpago" : lightningCup ? "Copa relámpago" : "Tiro Libre Matemático"}</h1>
+            <div style={{ color: activeShotStage.accent, fontSize: 10, fontWeight: 950, letterSpacing: 1.15 }}>{hasActiveCompetitiveMatch ? "FASE 13 · COMPETENCIA" : `CAMINO AL 10 · ETAPA ${currentStage.number}/5`}</div>
+            <h1 style={{ margin: "2px 0 0", maxWidth: 200, fontSize: "clamp(18px, 5vw, 26px)", lineHeight: 1, textShadow: "0 2px 10px #000" }}>{liveRoom ? "Sala relámpago" : lightningCup ? "Copa relámpago" : currentStage.name}</h1>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
             <button onClick={() => setSocialOpen(true)} disabled={phase === "flight"} aria-label="Abrir juegos con amigos" style={{ width: 42, height: 42, borderRadius: 13, border: lightningCup || liveRoom ? "2px solid #ffd166" : "1px solid rgba(255,255,255,.34)", background: lightningCup || liveRoom ? "rgba(255,209,102,.2)" : "rgba(4,15,25,.68)", color: "white", fontSize: 18, fontWeight: 900, backdropFilter: "blur(8px)", pointerEvents: "auto" }}>{liveRoom ? "📡" : "⚡"}</button>
@@ -1007,56 +1078,23 @@ export default function GestureShotDemo() {
           </div>
         )}
 
-        <div role="group" aria-label="Defensa del tiro" style={{ position: "absolute", top: "23%", left: 14, right: 14, zIndex: 11, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, padding: 4, borderRadius: 15, background: "rgba(3,14,23,.72)", border: "1px solid rgba(255,255,255,.24)", backdropFilter: "blur(9px)", pointerEvents: "auto" }}>
-          {DEFENSE_OPTIONS.map((option) => {
-            const selected = defenseMode === option.mode;
-            return (
-              <button
-                key={option.mode}
-                type="button"
-                aria-pressed={selected}
-                disabled={phase !== "ready" || Boolean(lightningCup) || Boolean(liveRoom)}
-                onClick={() => selectDefense(option.mode)}
-                style={{ minHeight: 38, border: selected ? "2px solid #ffd166" : "1px solid rgba(255,255,255,.2)", borderRadius: 11, background: selected ? "rgba(255,189,89,.2)" : "rgba(255,255,255,.07)", color: selected ? "#ffe5a3" : "#e7f0eb", fontSize: 11, fontWeight: 950, opacity: phase !== "ready" && !selected ? 0.46 : 1, pointerEvents: "auto" }}
-              >
-                {option.label}
-              </button>
-            );
-          })}
-        </div>
+        <button type="button" data-stage-scenario="true" onClick={() => { if (!hasActiveCompetitiveMatch && phase !== "flight") setCampaignOpen(true); }} disabled={phase === "flight"} aria-label={hasActiveCompetitiveMatch ? "Condiciones de la competencia" : `Abrir mapa de campaña. Etapa ${currentStage.number}: ${currentStage.name}`} style={{ position: "absolute", top: "23%", left: 14, right: 14, zIndex: 11, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 5, minHeight: 46, padding: 5, borderRadius: 15, background: "rgba(3,14,23,.78)", border: `1px solid ${activeShotStage.accent}`, color: "white", backdropFilter: "blur(9px)", pointerEvents: "auto" }}>
+          <span style={{ display: "grid", alignContent: "center", gap: 2, padding: "3px 5px", borderRadius: 10, background: "rgba(255,255,255,.06)", fontSize: 9, fontWeight: 950 }}><small style={{ color: activeShotStage.accent, fontSize: 7.5 }}>DISTANCIA</small>{activeShotStage.distanceM.toFixed(1)} m</span>
+          <span style={{ display: "grid", alignContent: "center", gap: 2, padding: "3px 5px", borderRadius: 10, background: "rgba(255,255,255,.06)", fontSize: 9, fontWeight: 950 }}><small style={{ color: activeShotStage.accent, fontSize: 7.5 }}>POSICIÓN</small>{activeShotStage.positionLabel}</span>
+          <span style={{ display: "grid", alignContent: "center", gap: 2, padding: "3px 5px", borderRadius: 10, background: "rgba(255,255,255,.06)", fontSize: 9, fontWeight: 950 }}><small style={{ color: activeShotStage.accent, fontSize: 7.5 }}>RETO</small>{activeShotStage.defenseLabel}{!hasActiveCompetitiveMatch && <small style={{ color: "#d4e3dc", fontSize: 7 }}> · VER MAPA</small>}</span>
+        </button>
 
         {phase === "ready" && !mathSolved && (
           <section data-v10-multiplication-challenge="true" aria-labelledby="multiplication-question" style={{ position: "absolute", top: "31%", left: 14, right: 14, zIndex: 12, padding: "13px 14px 14px", borderRadius: 20, background: "rgba(3,13,22,.9)", border: "2px solid rgba(114,242,161,.62)", boxShadow: "0 12px 34px rgba(0,0,0,.34)", backdropFilter: "blur(12px)", pointerEvents: "auto" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 9 }}>
-              <span style={{ color: "#72f2a1", fontSize: 10, fontWeight: 950, letterSpacing: 1.1 }}>{liveRoom ? "SALA EN VIVO · RETO ESPEJO" : lightningCup ? "COPA JUSTA · MISMA PREGUNTA" : "ACADEMIA DE TABLAS · ADAPTATIVA"}</span>
-              <span style={{ color: "#d6e7df", fontSize: 10, fontWeight: 900 }}>{liveRoom ? `SALA ${liveRoom.code}` : lightningCup ? `CÓDIGO ${lightningCup.seed}` : `${MASTERY_LABELS[currentTrackProgress.mastery]} · ${currentTrackProgress.roundsCompleted} retos`}</span>
+              <span style={{ color: activeShotStage.accent, fontSize: 10, fontWeight: 950, letterSpacing: 1.1 }}>{liveRoom ? "SALA EN VIVO · RETO ESPEJO" : lightningCup ? "COPA JUSTA · MISMA PREGUNTA" : currentStage.competition.toUpperCase()}</span>
+              <span style={{ color: "#d6e7df", fontSize: 10, fontWeight: 900 }}>{liveRoom ? `SALA ${liveRoom.code}` : lightningCup ? `CÓDIGO ${lightningCup.seed}` : currentStage.tableLabel.toUpperCase()}</span>
             </div>
-            <div aria-label={liveRoom || lightningCup ? "Regla de equidad: todos reciben la misma pregunta de la ronda" : `Modo adaptativo: ${ADAPTIVE_MODE_LABELS[adaptiveSelection.mode]}`} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, margin: "-2px 0 9px", color: "#ffe4a1", fontSize: 10, fontWeight: 900 }}>
-              <span>⚡ {liveRoom && myLivePlayer ? `Remate ${myLivePlayer.shotsCompleted + 1} de ${liveRoom.shotsPerPlayer}` : lightningCup ? `Ronda ${lightningCup.roundIndex + 1} de ${LIGHTNING_SHOTS_PER_PLAYER}` : ADAPTIVE_MODE_LABELS[adaptiveSelection.mode]}</span>
+            <div aria-label={liveRoom || lightningCup ? "Regla de equidad: todos reciben la misma pregunta de la ronda" : `Habilidad técnica: ${currentStage.technicalSkill}`} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, margin: "-2px 0 9px", color: "#ffe4a1", fontSize: 10, fontWeight: 900, textAlign: "center" }}>
+              <span>⚡ {liveRoom && myLivePlayer ? `Remate ${myLivePlayer.shotsCompleted + 1} de ${liveRoom.shotsPerPlayer}` : lightningCup ? `Ronda ${lightningCup.roundIndex + 1} de ${LIGHTNING_SHOTS_PER_PLAYER}` : currentStage.technicalSkill}</span>
               <span aria-hidden="true">·</span>
-              <span>{liveRoom || lightningCup ? "La precisión decide" : adaptiveSelection.message}</span>
+              <span>{liveRoom || lightningCup ? "La precisión decide" : currentStage.objective}</span>
             </div>
-            <div role="group" aria-label="Rango de tablas" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5, marginBottom: 10 }}>
-              {(Object.keys(MULTIPLICATION_TRACKS) as MultiplicationTrack[]).map((track) => {
-                const selected = tableTrack === track;
-                const locked = track === "tables-6-9" && !savedProgress.advancedUnlocked;
-                return (
-                  <button key={track} type="button" disabled={Boolean(lightningCup) || Boolean(liveRoom)} aria-pressed={selected} aria-disabled={locked || Boolean(lightningCup) || Boolean(liveRoom)} onClick={() => selectTableTrack(track)} style={{ minHeight: 31, border: selected ? "2px solid #72f2a1" : "1px solid rgba(255,255,255,.2)", borderRadius: 10, background: selected ? "rgba(114,242,161,.16)" : "rgba(255,255,255,.06)", color: selected ? "#a6f8c2" : locked ? "#91a099" : "#d6e2dc", fontSize: 11, fontWeight: 950, opacity: locked ? 0.7 : 1 }}>
-                    {locked ? "🔒 " : ""}{MULTIPLICATION_TRACKS[track].label}
-                  </button>
-                );
-              })}
-            </div>
-            {!liveRoom && !lightningCup && !savedProgress.advancedUnlocked && (
-              <div aria-label={`Progreso para desbloquear tablas 6 a 9: ${unlockProgress}%`} style={{ margin: "0 1px 10px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 4, color: "#b9cbc2", fontSize: 9, fontWeight: 900 }}>
-                  <span>CAMINO A TABLAS 6–9</span><span>{unlockProgress}%</span>
-                </div>
-                <div style={{ height: 5, borderRadius: 99, overflow: "hidden", background: "rgba(255,255,255,.12)" }}>
-                  <div style={{ width: `${unlockProgress}%`, height: "100%", borderRadius: 99, background: "linear-gradient(90deg, #72f2a1, #ffd166)", transition: "width .2s ease" }} />
-                </div>
-              </div>
-            )}
             <h2 id="multiplication-question" style={{ margin: "2px 0 11px", textAlign: "center", fontSize: "clamp(30px, 9vw, 42px)", lineHeight: 1, letterSpacing: 1, textShadow: "0 2px 10px #000" }}>{challenge.question}</h2>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8 }}>
               {challenge.options.map((answer) => {
@@ -1088,10 +1126,11 @@ export default function GestureShotDemo() {
 
         {phase === "result" && !liveRoom && !lightningCup && matchSummary.completed && (
           <section data-match-summary="true" role="status" style={{ position: "absolute", top: "25%", left: "50%", transform: "translateX(-50%)", zIndex: 12, width: "min(86%, 380px)", padding: "18px 18px 17px", textAlign: "center", borderRadius: 22, background: "rgba(3,13,20,.94)", border: "2px solid #ffd166", boxShadow: "0 0 38px rgba(255,209,102,.32)", backdropFilter: "blur(12px)", pointerEvents: "auto" }}>
-            <span style={{ display: "block", color: "#72f2a1", fontSize: 10, fontWeight: 950, letterSpacing: 1.35 }}>PARTIDO {matchMission.matchNumber} COMPLETADO</span>
+            <span style={{ display: "block", color: currentStage.accent, fontSize: 10, fontWeight: 950, letterSpacing: 1.35 }}>ETAPA {currentStage.number} SUPERADA · {currentStage.name.toUpperCase()}</span>
             <strong style={{ display: "block", marginTop: 5, color: "#ffd166", fontSize: 31, lineHeight: 1 }} aria-label={`${matchSummary.stars} de 3 estrellas`}>{"★".repeat(matchSummary.stars)}<span style={{ color: "rgba(255,255,255,.24)" }}>{"★".repeat(3 - matchSummary.stars)}</span></strong>
             <span style={{ display: "block", marginTop: 9, fontSize: 14, fontWeight: 900 }}>{matchSummary.message}</span>
             {stadiumFeedback && <span style={{ display: "block", marginTop: 8, color: "#ffe5a3", fontSize: 11, fontWeight: 900 }}>🎙️ {stadiumFeedback.announcer}</span>}
+            <span style={{ display: "block", marginTop: 8, padding: "7px 9px", borderRadius: 11, background: "rgba(114,242,161,.1)", border: "1px solid rgba(114,242,161,.3)", color: "#bdf6d1", fontSize: 10, fontWeight: 950 }}>{nextCampaignStage ? `🔓 NUEVO ESTADIO: ${nextCampaignStage.name.toUpperCase()}` : "🏆 CAMPAÑA COMPLETADA · LA COPA ES TUYA"}</span>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 13 }}>
               <span style={{ padding: 9, borderRadius: 12, background: matchSummary.goalBonusReached ? "rgba(114,242,161,.15)" : "rgba(255,255,255,.07)", border: `1px solid ${matchSummary.goalBonusReached ? "#72f2a1" : "rgba(255,255,255,.16)"}`, fontSize: 11, fontWeight: 950 }}>⚽ {matchSummary.goals} GOLES<br /><small>{matchSummary.goalBonusReached ? "BONUS LOGRADO" : `META ${MATCH_GOAL_BONUS}`}</small></span>
               <span style={{ padding: 9, borderRadius: 12, background: matchSummary.mathBonusReached ? "rgba(255,209,102,.15)" : "rgba(255,255,255,.07)", border: `1px solid ${matchSummary.mathBonusReached ? "#ffd166" : "rgba(255,255,255,.16)"}`, fontSize: 11, fontWeight: 950 }}>🎯 {matchSummary.firstTryCorrect} A LA PRIMERA<br /><small>{matchSummary.mathBonusReached ? "BONUS LOGRADO" : `META ${MATCH_MATH_BONUS}`}</small></span>
@@ -1137,19 +1176,52 @@ export default function GestureShotDemo() {
           </section>
         )}
 
+        {campaignOpen && (
+          <section data-campaign-map="true" role="dialog" aria-modal="true" aria-labelledby="campaign-map-title" style={{ position: "absolute", inset: 0, zIndex: 50, display: "grid", alignContent: "center", padding: "max(16px, env(safe-area-inset-top, 16px)) 14px max(16px, env(safe-area-inset-bottom, 16px))", background: "linear-gradient(180deg, rgba(2,8,17,.96), rgba(3,18,24,.99))", backdropFilter: "blur(16px)", pointerEvents: "auto", overflowY: "auto" }}>
+            <div style={{ width: "100%", maxWidth: 440, margin: "0 auto", padding: 17, borderRadius: 25, border: "2px solid rgba(255,209,102,.72)", background: "rgba(7,28,35,.98)", boxShadow: "0 22px 75px rgba(0,0,0,.55)" }}>
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+                <div><span style={{ color: "#72f2a1", fontSize: 9.5, fontWeight: 950, letterSpacing: 1.2 }}>FASE 13 · CAMPAÑA</span><h2 id="campaign-map-title" style={{ margin: "3px 0 0", color: "#ffd166", fontSize: 28, lineHeight: 1 }}>Camino al 10</h2></div>
+                <button type="button" onClick={() => setCampaignOpen(false)} aria-label="Cerrar mapa de campaña" style={{ width: 40, height: 40, borderRadius: 12, border: "1px solid rgba(255,255,255,.3)", background: "rgba(255,255,255,.08)", color: "white", fontSize: 22, fontWeight: 950 }}>×</button>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 11, color: "#d6e5de", fontSize: 10, fontWeight: 950 }}><span>⭐ {campaignTotalStars}/15 ESTRELLAS</span><span>{campaignCompletion}% COMPLETADO</span></div>
+              <div aria-hidden="true" style={{ height: 7, marginTop: 6, overflow: "hidden", borderRadius: 99, background: "rgba(255,255,255,.12)" }}><div style={{ width: `${campaignCompletion}%`, height: "100%", borderRadius: 99, background: "linear-gradient(90deg, #72f2a1, #68c7ff, #ffd166)", transition: "width .25s ease" }} /></div>
+              <div style={{ display: "grid", gap: 7, marginTop: 13 }}>
+                {CAMPAIGN_STAGES.map((stage, index) => {
+                  const unlocked = isCampaignStageUnlocked(campaignProgress, stage.id);
+                  const record = campaignProgress.stages[stage.id];
+                  const current = stage.id === currentStage.id;
+                  return (
+                    <button key={stage.id} type="button" disabled={!unlocked || phase === "flight"} onClick={() => enterCampaignStage(stage.id)} aria-label={unlocked ? `Jugar ${stage.name}, ${record?.bestStars ?? 0} de 3 estrellas` : `${stage.name} bloqueada`} style={{ display: "grid", gridTemplateColumns: "34px 1fr auto", alignItems: "center", gap: 9, minHeight: 58, padding: "7px 10px", borderRadius: 15, border: `1px solid ${current ? stage.accent : unlocked ? "rgba(255,255,255,.22)" : "rgba(255,255,255,.1)"}`, background: current ? `${stage.accent}18` : unlocked ? "rgba(255,255,255,.065)" : "rgba(255,255,255,.025)", color: unlocked ? "white" : "#74847d", textAlign: "left", opacity: unlocked ? 1 : .68 }}>
+                      <span style={{ display: "grid", width: 30, height: 30, placeItems: "center", borderRadius: 99, background: unlocked ? stage.accent : "rgba(255,255,255,.1)", color: unlocked ? "#102018" : "#9aaba3", fontSize: 12, fontWeight: 950 }}>{unlocked ? stage.number : "🔒"}</span>
+                      <span style={{ minWidth: 0 }}><strong style={{ display: "block", color: current ? stage.accent : "inherit", fontSize: 12 }}>{stage.name}</strong><small style={{ display: "block", marginTop: 2, fontSize: 8.5, color: unlocked ? "#b8cac1" : "#74847d" }}>{stage.tableLabel} · {stage.distanceM.toFixed(1)} m · {stage.technicalSkill}</small></span>
+                      <span style={{ color: "#ffd166", fontSize: 11, fontWeight: 950, whiteSpace: "nowrap" }}>{unlocked ? `${"★".repeat(record?.bestStars ?? 0)}${"☆".repeat(3 - (record?.bestStars ?? 0))}` : `GANA ETAPA ${index}`}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <p style={{ margin: "10px 2px 0", color: "#9fb3aa", fontSize: 9, lineHeight: 1.35, textAlign: "center" }}>Completa un partido para abrir el siguiente estadio. Puedes regresar y mejorar tus estrellas.</p>
+            </div>
+          </section>
+        )}
+
         {welcomeOpen && (
           <section data-v12-welcome="true" role="dialog" aria-modal="true" aria-labelledby="v12-welcome-title" style={{ position: "absolute", inset: 0, zIndex: 40, display: "grid", alignContent: "center", padding: "max(18px, env(safe-area-inset-top, 18px)) 16px max(18px, env(safe-area-inset-bottom, 18px))", background: "radial-gradient(circle at 50% 18%, rgba(16,99,84,.45), transparent 36%), linear-gradient(180deg, rgba(2,8,17,.94), rgba(3,18,24,.985))", backdropFilter: "blur(15px)", pointerEvents: "auto", overflowY: "auto" }}>
             <div className="v12-welcome-card" style={{ width: "100%", maxWidth: 440, margin: "0 auto", padding: "18px", borderRadius: 26, border: "2px solid rgba(255,209,102,.78)", background: "linear-gradient(160deg, rgba(9,41,42,.97), rgba(5,23,32,.98))", boxShadow: "0 24px 80px rgba(0,0,0,.55), 0 0 42px rgba(255,209,102,.12)" }}>
               <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
                 <div>
-                  <span style={{ color: "#72f2a1", fontSize: 9.5, fontWeight: 950, letterSpacing: 1.25 }}>FASE 12 · EXPERIENCIA COMPLETA</span>
+                  <span style={{ color: "#72f2a1", fontSize: 9.5, fontWeight: 950, letterSpacing: 1.25 }}>FASE 13 · CAMINO AL 10</span>
                   <h2 id="v12-welcome-title" style={{ margin: "4px 0 0", color: "#ffd166", fontSize: "clamp(27px, 8vw, 35px)", lineHeight: .98 }}>Tiro Libre<br />Matemático</h2>
                 </div>
                 <button type="button" onClick={() => setWelcomeOpen(false)} aria-label="Cerrar menú principal" style={{ width: 40, height: 40, flex: "0 0 auto", borderRadius: 12, border: "1px solid rgba(255,255,255,.3)", background: "rgba(255,255,255,.08)", color: "white", fontSize: 22, fontWeight: 950 }}>×</button>
               </div>
               <p style={{ margin: "9px 0 12px", color: "#e8f3ed", fontSize: 14, fontWeight: 900 }}>APRENDE · REMATA · COMPARTE</p>
+
               <div aria-label="Cómo jugar" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 7 }}>
-                {[["1", "Calcula", "Resuelve la tabla"], ["2", "Desliza", "Elige fuerza y dirección"], ["3", "Curva", "Sorprende al arquero"]].map(([step, title, detail]) => (
+                {[
+                  ["1", "Calcula", "Resuelve la tabla"],
+                  ["2", "Desliza", "Elige fuerza y dirección"],
+                  ["3", "Curva", "Sorprende al arquero"],
+                ].map(([step, title, detail]) => (
                   <div key={step} style={{ minHeight: 86, padding: "9px 7px", borderRadius: 14, background: "rgba(255,255,255,.07)", border: "1px solid rgba(255,255,255,.15)", textAlign: "center" }}>
                     <span style={{ display: "grid", width: 23, height: 23, margin: "0 auto 5px", placeItems: "center", borderRadius: 99, background: "#ffd166", color: "#16201b", fontSize: 11, fontWeight: 950 }}>{step}</span>
                     <strong style={{ display: "block", color: "white", fontSize: 11 }}>{title}</strong>
@@ -1157,14 +1229,17 @@ export default function GestureShotDemo() {
                   </div>
                 ))}
               </div>
-              <div style={{ marginTop: 10, padding: "10px 11px", borderRadius: 14, background: "rgba(114,242,161,.08)", border: "1px solid rgba(114,242,161,.28)" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, color: "#cfe0d8", fontSize: 9.5, fontWeight: 900 }}><span>Tu camino: {MASTERY_LABELS[currentTrackProgress.mastery]}</span><span>Tablas 6–9 · {unlockProgress}%</span></div>
-                <div aria-hidden="true" style={{ height: 5, marginTop: 6, overflow: "hidden", borderRadius: 99, background: "rgba(255,255,255,.12)" }}><div style={{ width: `${unlockProgress}%`, height: "100%", borderRadius: 99, background: "linear-gradient(90deg, #72f2a1, #ffd166)" }} /></div>
-              </div>
+
+              <button type="button" onClick={() => setCampaignOpen(true)} style={{ width: "100%", marginTop: 10, padding: "10px 11px", borderRadius: 14, background: "rgba(114,242,161,.08)", border: "1px solid rgba(114,242,161,.32)", color: "white", textAlign: "left" }}>
+                <span style={{ display: "flex", justifyContent: "space-between", gap: 8, color: "#cfe0d8", fontSize: 9.5, fontWeight: 950 }}><span>ETAPA {currentStage.number}/5 · {currentStage.name.toUpperCase()}</span><span>⭐ {campaignTotalStars}/15</span></span>
+                <span style={{ display: "block", marginTop: 4, color: currentStage.accent, fontSize: 10, fontWeight: 950 }}>VER MAPA Y ESTADIOS →</span>
+                <span aria-hidden="true" style={{ display: "block", height: 5, marginTop: 6, overflow: "hidden", borderRadius: 99, background: "rgba(255,255,255,.12)" }}><span style={{ display: "block", width: `${campaignCompletion}%`, height: "100%", borderRadius: 99, background: "linear-gradient(90deg, #72f2a1, #ffd166)" }} /></span>
+              </button>
+
               {hasActiveCompetitiveMatch ? (
                 <button type="button" onClick={() => setWelcomeOpen(false)} style={{ width: "100%", minHeight: 51, marginTop: 12, borderRadius: 15, border: "2px solid rgba(255,255,255,.38)", background: "linear-gradient(180deg, #ff7a3d, #dd451f)", color: "white", fontSize: 15, fontWeight: 950 }}>CONTINUAR PARTIDO</button>
               ) : (
-                <button type="button" onClick={startSoloExperience} style={{ width: "100%", minHeight: 51, marginTop: 12, borderRadius: 15, border: "2px solid rgba(255,255,255,.38)", background: "linear-gradient(180deg, #35c76e, #168746)", color: "white", fontSize: 15, fontWeight: 950, boxShadow: "0 8px 24px rgba(22,135,70,.3)" }}>⚽ JUGAR PARTIDO SOLO</button>
+                <button type="button" onClick={startSoloExperience} style={{ width: "100%", minHeight: 51, marginTop: 12, borderRadius: 15, border: "2px solid rgba(255,255,255,.38)", background: "linear-gradient(180deg, #35c76e, #168746)", color: "white", fontSize: 14, fontWeight: 950, boxShadow: "0 8px 24px rgba(22,135,70,.3)" }}>⚽ JUGAR · {currentStage.name.toUpperCase()}</button>
               )}
               <button type="button" onClick={openSocialExperience} style={{ width: "100%", minHeight: 44, marginTop: 8, borderRadius: 13, border: "1px solid rgba(104,199,255,.5)", background: "rgba(104,199,255,.12)", color: "#bfe7ff", fontSize: 12, fontWeight: 950 }}>⚡ COMPETIR CON AMIGOS</button>
               <p style={{ margin: "8px 2px 0", color: "#9fb3aa", fontSize: 9, lineHeight: 1.35, textAlign: "center" }}>Copa local · sala en vivo · reto por enlace<br />Sin chat, cuentas, anuncios ni ubicación.</p>
@@ -1177,7 +1252,7 @@ export default function GestureShotDemo() {
             <div style={{ width: "100%", maxWidth: 430, margin: "0 auto", padding: "19px", borderRadius: 25, border: "2px solid rgba(255,209,102,.72)", background: "rgba(7,29,35,.96)", boxShadow: "0 20px 70px rgba(0,0,0,.48)" }}>
               <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
                 <div>
-                  <span style={{ color: "#72f2a1", fontSize: 10, fontWeight: 950, letterSpacing: 1.3 }}>FASE 12 · COMPETENCIA SEGURA</span>
+                  <span style={{ color: "#72f2a1", fontSize: 10, fontWeight: 950, letterSpacing: 1.3 }}>FASE 13 · COMPETENCIA SEGURA</span>
                   <h2 id="lightning-title" style={{ margin: "4px 0 0", color: "#ffd166", fontSize: 27, lineHeight: 1 }}>{liveRoom ? "📡 Sala relámpago" : "⚡ Juega con amigos"}</h2>
                 </div>
                 <button type="button" onClick={() => setSocialOpen(false)} aria-label="Cerrar juegos con amigos" style={{ width: 40, height: 40, flex: "0 0 auto", borderRadius: 12, border: "1px solid rgba(255,255,255,.3)", background: "rgba(255,255,255,.08)", color: "white", fontSize: 22, fontWeight: 950 }}>×</button>
@@ -1299,7 +1374,7 @@ export default function GestureShotDemo() {
             ) : lightningCup ? (
               <button onClick={lightningCup.status === "completed" ? abandonLightningCup : continueLightningCup} style={{ minHeight: 56, borderRadius: 17, border: "3px solid rgba(255,255,255,.4)", background: lightningCup.status === "completed" ? "linear-gradient(180deg, #32bd68, #168746)" : "linear-gradient(180deg, #ff7a3d, #e64921)", color: "white", fontSize: 18, fontWeight: 950, boxShadow: lightningCup.status === "completed" ? "0 6px 0 #0b5630" : "0 6px 0 #9e2d17", pointerEvents: "auto" }}>{lightningCup.status === "completed" ? "NUEVA COPA" : `SIGUE ${activeLightningPlayer?.name.toUpperCase()}`}</button>
             ) : (
-              <button onClick={matchSummary.completed ? startRematch : nextChallenge} style={{ minHeight: 56, borderRadius: 17, border: "3px solid rgba(255,255,255,.4)", background: matchSummary.completed ? "linear-gradient(180deg, #32bd68, #168746)" : "linear-gradient(180deg, #ff7a3d, #e64921)", color: "white", fontSize: 19, fontWeight: 950, boxShadow: matchSummary.completed ? "0 6px 0 #0b5630" : "0 6px 0 #9e2d17", pointerEvents: "auto" }}>{matchSummary.completed ? "JUGAR REVANCHA" : "SIGUIENTE RETO"}</button>
+              <button onClick={matchSummary.completed ? advanceCampaign : nextChallenge} style={{ minHeight: 56, borderRadius: 17, border: "3px solid rgba(255,255,255,.4)", background: matchSummary.completed ? "linear-gradient(180deg, #32bd68, #168746)" : "linear-gradient(180deg, #ff7a3d, #e64921)", color: "white", fontSize: matchSummary.completed ? 15 : 19, fontWeight: 950, boxShadow: matchSummary.completed ? "0 6px 0 #0b5630" : "0 6px 0 #9e2d17", pointerEvents: "auto" }}>{matchSummary.completed ? nextCampaignStage ? `AVANZAR A ${nextCampaignStage.name.toUpperCase()}` : "REPETIR GRAN FINAL" : "SIGUIENTE RETO"}</button>
             )
           ) : (
             <p style={{ margin: 0, textAlign: "center", color: "rgba(225,238,230,.78)", fontSize: 11, fontWeight: 800 }}>

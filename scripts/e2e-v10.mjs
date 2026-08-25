@@ -159,22 +159,35 @@ try {
   const initial = await evaluate(`(() => ({
     text: document.body.innerText,
     welcome: Boolean(document.querySelector('[data-v12-welcome]')),
-    locked: [...document.querySelectorAll('button')].some((button) => button.textContent.includes('🔒') && button.textContent.includes('Tablas 6')),
     overflow: document.documentElement.scrollWidth - innerWidth,
     unnamedButtons: [...document.querySelectorAll('button')].filter((button) => !button.disabled && !(button.getAttribute('aria-label') || button.textContent.trim())).length,
   }))()`);
-  assert(initial.welcome, "Phase 12 welcome did not open for a new player.");
-  assert(initial.text.includes("FASE 12") && initial.text.includes("APRENDE · REMATA · COMPARTE"), "Phase 12 promise is missing.");
+  assert(initial.welcome, "Phase 13 welcome did not open for a new player.");
+  assert(initial.text.includes("FASE 13") && initial.text.includes("APRENDE · REMATA · COMPARTE"), "Phase 13 campaign promise is missing.");
   assert(initial.text.includes("Calcula") && initial.text.includes("Desliza") && initial.text.includes("Curva"), "Three-step tutorial is incomplete.");
-  assert(initial.text.includes("JUGAR PARTIDO SOLO") && initial.text.includes("COMPETIR CON AMIGOS"), "Phase 12 mode choices are missing.");
-  assert(initial.text.includes("ACADEMIA DE TABLAS"), "Multiplication academy is missing.");
+  assert(initial.text.includes("JUGAR · CANCHA DEL BARRIO") && initial.text.includes("COMPETIR CON AMIGOS"), "Phase 13 mode choices are missing.");
+  assert(initial.text.includes("PRIMER SILBATAZO") && initial.text.includes("TABLA DEL 2"), "Campaign learning focus is missing.");
   assert(initial.text.includes("Tiro 1/5") && initial.text.includes("0/2 GOLES"), "Initial match scoreboard is incorrect.");
-  assert(initial.locked, "Advanced multiplication tables should start locked.");
   assert(initial.overflow <= 1, `Mobile layout overflows by ${initial.overflow}px.`);
   assert(initial.unnamedButtons === 0, "An enabled button has no accessible name.");
 
+  const mapOpened = await evaluate(`(() => {
+    const button = [...document.querySelectorAll('button')].find((item) => item.textContent.includes('VER MAPA Y ESTADIOS'));
+    if (!button) return false;
+    button.click();
+    return true;
+  })()`);
+  assert(mapOpened, "Campaign map entry was not available.");
+  const mapState = await waitFor(async () => await evaluate(`(() => {
+    const map = document.querySelector('[data-campaign-map]');
+    return map ? { text: map.innerText, locked: [...map.querySelectorAll('button')].filter((button) => button.disabled).length } : null;
+  })()`), "Campaign map did not open.");
+  assert(mapState.text.includes("Cancha del barrio") && mapState.text.includes("Gran final"), "Campaign map does not show all stadiums.");
+  assert(mapState.locked >= 4, "Later campaign stages should start locked.");
+  await evaluate(`document.querySelector('[aria-label="Cerrar mapa de campaña"]')?.click()`);
+
   const soloStarted = await evaluate(`(() => {
-    const button = [...document.querySelectorAll('button')].find((item) => item.textContent.includes('JUGAR PARTIDO SOLO'));
+    const button = [...document.querySelectorAll('button')].find((item) => item.textContent.includes('JUGAR · CANCHA DEL BARRIO'));
     if (!button) return false;
     button.click();
     return localStorage.getItem('tlm_v12_welcome_seen') === 'true';
@@ -200,7 +213,8 @@ try {
   assert(firstRound?.tracks?.["tables-2-5"]?.roundsCompleted === 1, "Completed round was not persisted.");
   assert(firstMatchShot?.shots?.length === 1, "Completed shot was not added to the match mission.");
   await reload();
-  assert((await evaluate("document.body.innerText")).includes("1 retos"), "Persisted progress was not restored after reload.");
+  const restoredRound = await evaluate(`JSON.parse(localStorage.getItem('tlm_v10_multiplication_progress_v2') || 'null')?.tracks?.['tables-2-5']?.roundsCompleted`);
+  assert(restoredRound === 1, "Persisted multiplication progress was not restored after reload.");
   assert((await evaluate("document.body.innerText")).includes("Tiro 2/5"), "Match mission was not restored after reload.");
 
   await evaluate(`(() => {
@@ -223,11 +237,20 @@ try {
       },
       updatedAt: '2026-08-24T00:00:00.000Z'
     }));
+    localStorage.setItem('tlm_v13_campaign_progress_v1', JSON.stringify({
+      version: 1,
+      currentStageId: 'juvenil',
+      highestUnlockedIndex: 2,
+      stages: {
+        barrio: { bestStars: 2, matchesCompleted: 1 },
+        escolar: { bestStars: 1, matchesCompleted: 1 }
+      }
+    }));
   })()`);
   await reload();
-  const adaptiveState = await evaluate(`({ question: document.querySelector('#multiplication-question')?.textContent?.trim(), text: document.body.innerText })`);
-  assert(adaptiveState.question === "4 × 5 = ?", `Adaptive route selected ${adaptiveState.question} instead of the seeded reinforcement fact.`);
-  assert(adaptiveState.text.includes("Reforzando"), "Adaptive reinforcement mode was not explained.");
+  const campaignState = await evaluate(`({ question: document.querySelector('#multiplication-question')?.textContent?.trim(), text: document.body.innerText })`);
+  assert(campaignState.question?.startsWith("4 × "), `Campaign route selected ${campaignState.question} instead of the stage's table of 4.`);
+  assert(campaignState.text.includes("Estadio juvenil") && campaignState.text.includes("Cuartos de final"), "Restored campaign stage was not explained.");
 
   await evaluate(`localStorage.removeItem('tlm_v10_multiplication_progress_v2'); localStorage.setItem('tlm_v10_multiplication_progress_v1', JSON.stringify({
     version: 1,
@@ -256,13 +279,12 @@ try {
     return true;
   })()`);
   assert(continued, "Next challenge button was not available after the result.");
-  const advancedTrack = await waitFor(async () => await evaluate(`(() => {
-    const button = [...document.querySelectorAll('button')].find((item) => item.textContent.includes('Tablas 6'));
-    if (!button) return null;
-    return { locked: button.textContent.includes('🔒'), ariaDisabled: button.getAttribute('aria-disabled') };
-  })()`), "Advanced multiplication track did not render for the next challenge.");
-  assert(advancedTrack.locked === false, "Advanced track remained visually locked.");
-  assert(advancedTrack.ariaDisabled !== "true", "Advanced track remained disabled after unlock.");
+  const continuedCampaign = await waitFor(async () => await evaluate(`(() => ({
+    question: document.querySelector('#multiplication-question')?.textContent?.trim(),
+    campaign: JSON.parse(localStorage.getItem('tlm_v13_campaign_progress_v1') || 'null')
+  }))()`), "Campaign did not render the next challenge.");
+  assert(continuedCampaign.question?.startsWith("4 × "), "Current stadium lost its table focus after continuing.");
+  assert(continuedCampaign.campaign?.currentStageId === "juvenil", "Campaign stage was not preserved.");
 
   await evaluate(`localStorage.setItem('tlm_v10_match_mission_v1', JSON.stringify({
     version: 1,
@@ -284,8 +306,8 @@ try {
   }))()`);
   assert(matchResult.hasSummary, "Five completed shots did not open the match summary.");
   assert(await evaluate(`document.querySelector('[data-stadium-celebration]')?.getAttribute('data-stadium-celebration') === 'match'`), "Match celebration was not rendered.");
-  assert(matchResult.text.includes("PARTIDO 7 COMPLETADO"), "Match completion was not announced.");
-  assert(matchResult.text.includes("JUGAR REVANCHA"), "Rematch action was not offered.");
+  assert(matchResult.text.includes("ETAPA 3 SUPERADA") && matchResult.text.includes("NUEVO ESTADIO: COPA DE LA CIUDAD"), "Campaign completion and unlock were not announced.");
+  assert(matchResult.text.includes("AVANZAR A COPA DE LA CIUDAD"), "Campaign advance action was not offered.");
   assert(matchResult.mission?.shots?.length === 5, "Final match shot was not persisted.");
   const sharedMatch = await evaluate(`(() => {
     const button = [...document.querySelectorAll('button')].find((item) => item.textContent.includes('COMPARTIR MI PARTIDO'));
@@ -295,18 +317,19 @@ try {
   })()`);
   assert(sharedMatch, "Completed solo match did not offer a share action.");
   await waitFor(async () => (await evaluate("document.body.innerText")).includes("Resultado copiado"), "Solo match share feedback was not shown.");
-  const rematchStarted = await evaluate(`(() => {
-    const button = [...document.querySelectorAll('button')].find((item) => item.textContent.includes('JUGAR REVANCHA'));
+  const campaignAdvanced = await evaluate(`(() => {
+    const button = [...document.querySelectorAll('button')].find((item) => item.textContent.includes('AVANZAR A COPA DE LA CIUDAD'));
     if (!button) return false;
     button.click();
     return true;
   })()`);
-  assert(rematchStarted, "Rematch button was not actionable.");
-  const rematch = await waitFor(async () => await evaluate(`(() => {
+  assert(campaignAdvanced, "Campaign advance button was not actionable.");
+  const advancedStage = await waitFor(async () => await evaluate(`(() => {
     const mission = JSON.parse(localStorage.getItem('tlm_v10_match_mission_v1') || 'null');
-    return document.body.innerText.includes('Tiro 1/5') && mission?.matchNumber === 8 && mission?.shots?.length === 0;
-  })()`), "Rematch did not reset the five-shot mission.");
-  assert(rematch === true, "Rematch state is inconsistent.");
+    const campaign = JSON.parse(localStorage.getItem('tlm_v13_campaign_progress_v1') || 'null');
+    return document.body.innerText.includes('Copa de la ciudad') && document.body.innerText.includes('Tiro 1/5') && mission?.matchNumber === 8 && mission?.shots?.length === 0 && campaign?.currentStageId === 'ciudad';
+  })()`), "Campaign did not open the new stadium with a fresh match.");
+  assert(advancedStage === true, "Advanced campaign state is inconsistent.");
 
   const mainMenu = await evaluate(`(() => {
     const button = document.querySelector('[aria-label="Abrir menú principal"]');
@@ -380,9 +403,9 @@ try {
 
   console.log(JSON.stringify({
     status: "passed",
-    checks: ["phase 12 welcome", "three-step tutorial", "mode choice persistence", "mobile layout", "accessible buttons", "sound preference", "match scoreboard", "math answer", "keyboard shot", "round persistence", "match persistence", "reload recovery", "adaptive reinforcement", "V1 migration", "advanced unlock", "unlock announcement", "five-shot completion", "stadium celebration", "solo result sharing", "rematch", "main menu", "social lobby", "safe player defaults", "remote room creation", "credential-safe sharing", "remote room exit", "multiplayer turn", "mirrored question", "lightning persistence", "runtime errors", "heap budget"],
+    checks: ["phase 13 welcome", "campaign map", "locked stadiums", "three-step tutorial", "mode choice persistence", "mobile layout", "accessible buttons", "sound preference", "match scoreboard", "math answer", "keyboard shot", "round persistence", "match persistence", "reload recovery", "stage table focus", "campaign recovery", "V1 migration", "advanced unlock", "unlock announcement", "five-shot completion", "stadium celebration", "stadium unlock", "solo result sharing", "campaign advance", "main menu", "social lobby", "safe player defaults", "remote room creation", "credential-safe sharing", "remote room exit", "multiplayer turn", "mirrored question", "lightning persistence", "runtime errors", "heap budget"],
     firstRound: firstRound.tracks["tables-2-5"],
-    unlocked: { ...unlocked, advancedTrack },
+    unlocked: { ...unlocked, campaignStage: continuedCampaign.campaign.currentStageId },
     jsHeapUsed,
   }, null, 2));
 } finally {

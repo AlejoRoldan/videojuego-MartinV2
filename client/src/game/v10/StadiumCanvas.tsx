@@ -11,6 +11,7 @@ import {
 } from "./cameraProjection";
 import { MATCH_BALL, type FlightSample, type Vec3 } from "./shotPhysics3d";
 import type { GoalkeeperActor, SceneActors, WallActor } from "./footballCollisions";
+import type { StadiumThemeId } from "./campaignProgress";
 
 interface StadiumCanvasProps {
   samples: readonly FlightSample[];
@@ -19,9 +20,18 @@ interface StadiumCanvasProps {
   replayToken?: number;
   progress?: number;
   onFlightComplete?: () => void;
+  theme?: StadiumThemeId;
 }
 
 const EMPTY_ACTORS: SceneActors = { wall: [], goalkeeper: null };
+
+const STADIUM_PALETTES: Record<StadiumThemeId, { skyTop: string; skyMiddle: string; skyBottom: string; glow: string; stands: string }> = {
+  sunset: { skyTop: "#102b46", skyMiddle: "#397093", skyBottom: "#f0a85d", glow: "rgba(255,213,142,.34)", stands: "#163347" },
+  school: { skyTop: "#0c3d66", skyMiddle: "#2980a8", skyBottom: "#b7e6f2", glow: "rgba(190,239,255,.32)", stands: "#164b67" },
+  night: { skyTop: "#04091c", skyMiddle: "#111f4b", skyBottom: "#703768", glow: "rgba(190,164,255,.28)", stands: "#10152c" },
+  city: { skyTop: "#101023", skyMiddle: "#38355e", skyBottom: "#db6b45", glow: "rgba(255,159,104,.3)", stands: "#25213a" },
+  final: { skyTop: "#050915", skyMiddle: "#10294c", skyBottom: "#805f23", glow: "rgba(255,209,102,.38)", stands: "#0f1727" },
+};
 
 interface CanvasSize extends Viewport {
   pixelRatio: number;
@@ -72,11 +82,12 @@ function fillWorldPolygon(
   context.fill();
 }
 
-function drawAtmosphere(context: CanvasRenderingContext2D, viewport: Viewport): void {
+function drawAtmosphere(context: CanvasRenderingContext2D, viewport: Viewport, theme: StadiumThemeId): void {
+  const palette = STADIUM_PALETTES[theme];
   const sky = context.createLinearGradient(0, 0, 0, viewport.height * 0.62);
-  sky.addColorStop(0, "#081429");
-  sky.addColorStop(0.48, "#17456b");
-  sky.addColorStop(1, "#f0a85d");
+  sky.addColorStop(0, palette.skyTop);
+  sky.addColorStop(0.48, palette.skyMiddle);
+  sky.addColorStop(1, palette.skyBottom);
   context.fillStyle = sky;
   context.fillRect(0, 0, viewport.width, viewport.height);
 
@@ -88,12 +99,12 @@ function drawAtmosphere(context: CanvasRenderingContext2D, viewport: Viewport): 
     viewport.height * 0.18,
     viewport.width * 0.45,
   );
-  glow.addColorStop(0, "rgba(255,213,142,.32)");
+  glow.addColorStop(0, palette.glow);
   glow.addColorStop(1, "rgba(255,213,142,0)");
   context.fillStyle = glow;
   context.fillRect(0, 0, viewport.width, viewport.height * 0.65);
 
-  context.fillStyle = "#101c2b";
+  context.fillStyle = palette.stands;
   context.beginPath();
   context.moveTo(0, viewport.height * 0.2);
   context.lineTo(viewport.width, viewport.height * 0.24);
@@ -411,9 +422,10 @@ function drawScene(
   goalDistanceM: number,
   progress: number,
   actors: SceneActors,
+  theme: StadiumThemeId,
 ): void {
   context.clearRect(0, 0, viewport.width, viewport.height);
-  drawAtmosphere(context, viewport);
+  drawAtmosphere(context, viewport, theme);
   const camera = createGameplayCamera(goalDistanceM, progress);
   drawField(context, viewport, camera, goalDistanceM);
   drawGoal(context, viewport, camera, goalDistanceM);
@@ -435,7 +447,7 @@ function drawScene(
   context.fillRect(0, 0, viewport.width, viewport.height);
 }
 
-export default function StadiumCanvas({ samples, goalDistanceM, actors = EMPTY_ACTORS, replayToken = 0, progress, onFlightComplete }: StadiumCanvasProps) {
+export default function StadiumCanvas({ samples, goalDistanceM, actors = EMPTY_ACTORS, replayToken = 0, progress, onFlightComplete, theme = "sunset" }: StadiumCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sizeRef = useRef<CanvasSize>({ width: 360, height: 500, pixelRatio: 1 });
   const progressRef = useRef(0);
@@ -450,8 +462,8 @@ export default function StadiumCanvas({ samples, goalDistanceM, actors = EMPTY_A
     if (!context) return;
     const { width, height, pixelRatio } = sizeRef.current;
     context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-    drawScene(context, { width, height }, samples, goalDistanceM, progress, actors);
-  }, [actors, goalDistanceM, samples]);
+    drawScene(context, { width, height }, samples, goalDistanceM, progress, actors, theme);
+  }, [actors, goalDistanceM, samples, theme]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
