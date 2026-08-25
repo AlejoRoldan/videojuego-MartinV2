@@ -250,7 +250,7 @@ try {
   await reload();
   const campaignState = await evaluate(`({ question: document.querySelector('#multiplication-question')?.textContent?.trim(), text: document.body.innerText })`);
   assert(campaignState.question?.startsWith("4 × "), `Campaign route selected ${campaignState.question} instead of the stage's table of 4.`);
-  assert(campaignState.text.includes("Estadio juvenil") && campaignState.text.includes("Cuartos de final"), "Restored campaign stage was not explained.");
+  assert(campaignState.text.includes("Estadio juvenil") && campaignState.text.includes("CUARTOS DE FINAL"), "Restored campaign stage was not explained.");
 
   await evaluate(`localStorage.removeItem('tlm_v10_multiplication_progress_v2'); localStorage.setItem('tlm_v10_multiplication_progress_v1', JSON.stringify({
     version: 1,
