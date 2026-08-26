@@ -3,6 +3,7 @@ import {
   MATCH_SHOT_LIMIT,
   V10_MATCH_MISSION_KEY,
   createMatchMission,
+  getCurrentFirstTryStreak,
   getMatchMissionSummary,
   loadMatchMission,
   normalizeMatchMission,
@@ -45,6 +46,20 @@ describe("V10 match missions", () => {
   it("starts a clean rematch without erasing the match sequence", () => {
     const rematch = startMatchRematch({ version: 1, matchNumber: 4, shots: [{ scored: true, firstTry: true }] });
     expect(rematch).toEqual({ version: 1, matchNumber: 5, shots: [] });
+  });
+
+  it("restores only the active first-try streak from a saved match", () => {
+    expect(getCurrentFirstTryStreak({
+      version: 1,
+      matchNumber: 3,
+      shots: [
+        { scored: true, firstTry: true },
+        { scored: false, firstTry: false },
+        { scored: true, firstTry: true },
+        { scored: true, firstTry: true },
+      ],
+    })).toBe(2);
+    expect(getCurrentFirstTryStreak(createMatchMission())).toBe(0);
   });
 
   it("normalizes malformed or oversized stored sessions", () => {

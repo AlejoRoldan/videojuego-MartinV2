@@ -68,28 +68,28 @@ function GameRouter() {
 }
 
 function App() {
-  const showPhysicsLab = typeof window !== "undefined"
-    && new URLSearchParams(window.location.search).get("physicsLab") === "1";
-  const showV10Preview = typeof window !== "undefined"
-    && new URLSearchParams(window.location.search).get("v10Preview") === "1";
-  const showV10Demo = typeof window !== "undefined"
-    && new URLSearchParams(window.location.search).get("v10Demo") === "1";
+  const searchParams = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search)
+    : new URLSearchParams();
+  const showPhysicsLab = searchParams.get("physicsLab") === "1";
+  const showV10Preview = searchParams.get("v10Preview") === "1";
+  const showLegacyGame = searchParams.get("legacy") === "1";
 
   return (
     <ErrorBoundary>
       <ThemeProvider defaultTheme="dark">
         <TooltipProvider>
           <Toaster />
-          {showV10Demo ? (
-            <GestureShotDemo />
-          ) : showV10Preview ? (
+          {showV10Preview ? (
             <V10FieldPreview />
           ) : showPhysicsLab ? (
             <ShotPhysicsLab />
-          ) : (
+          ) : showLegacyGame ? (
             <GameProvider>
               <GameRouter />
             </GameProvider>
+          ) : (
+            <GestureShotDemo />
           )}
         </TooltipProvider>
       </ThemeProvider>

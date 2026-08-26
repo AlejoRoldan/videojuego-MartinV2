@@ -5,6 +5,10 @@ export interface WelcomeStorage {
   setItem(key: string, value: string): void;
 }
 
+export interface ClipboardWriter {
+  writeText(text: string): Promise<void>;
+}
+
 export interface MatchMomentum {
   label: string;
   accent: string;
@@ -24,6 +28,19 @@ export function saveWelcomeSeen(storage: WelcomeStorage | null): boolean {
   if (!storage) return false;
   try {
     storage.setItem(V12_WELCOME_SEEN_KEY, "true");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function tryWriteClipboard(
+  text: string,
+  clipboard: ClipboardWriter | null | undefined,
+): Promise<boolean> {
+  if (!clipboard || typeof clipboard.writeText !== "function") return false;
+  try {
+    await clipboard.writeText(text);
     return true;
   } catch {
     return false;

@@ -2,9 +2,9 @@ name: QA
 
 on:
   push:
-    branches: [main, "codex/**"]
+    branches: [main, "codex/**", "release/**"]
   pull_request:
-    branches: [main, "codex/**"]
+    branches: [main, "codex/**", "release/**"]
 
 jobs:
   test:

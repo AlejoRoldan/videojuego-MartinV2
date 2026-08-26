@@ -68,6 +68,16 @@ export function startMatchRematch(current: MatchMissionV1): MatchMissionV1 {
   return createMatchMission(mission.matchNumber + 1);
 }
 
+export function getCurrentFirstTryStreak(current: MatchMissionV1): number {
+  const mission = normalizeMatchMission(current);
+  let streak = 0;
+  for (let index = mission.shots.length - 1; index >= 0; index -= 1) {
+    if (!mission.shots[index].firstTry) break;
+    streak += 1;
+  }
+  return streak;
+}
+
 export function getMatchMissionSummary(current: MatchMissionV1): MatchMissionSummary {
   const mission = normalizeMatchMission(current);
   const goals = mission.shots.filter((shot) => shot.scored).length;

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 const EXTERNAL_APP_URL = process.env.E2E_V10_BASE_URL;
-const APP_URL = EXTERNAL_APP_URL ?? "http://127.0.0.1:4175/?v10Demo=1";
+const APP_URL = EXTERNAL_APP_URL ?? "http://127.0.0.1:4175/";
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);

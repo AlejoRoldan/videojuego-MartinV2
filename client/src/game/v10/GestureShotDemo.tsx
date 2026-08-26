@@ -14,6 +14,7 @@ import {
   MATCH_MATH_BONUS,
   MATCH_SHOT_LIMIT,
   createMatchMission,
+  getCurrentFirstTryStreak,
   getMatchMissionSummary,
   loadMatchMission,
   recordMatchShot,
@@ -73,7 +74,7 @@ import {
   type LiveRoomSession,
   type LiveRoomSnapshot,
 } from "./liveRoom";
-import { createMatchShareText, getMatchMomentum, loadWelcomeSeen, saveWelcomeSeen } from "./experienceV12";
+import { createMatchShareText, getMatchMomentum, loadWelcomeSeen, saveWelcomeSeen, tryWriteClipboard } from "./experienceV12";
 import {
   CAMPAIGN_STAGES,
   createCampaignChallenge,
@@ -267,6 +268,7 @@ export default function GestureShotDemo() {
       ? startMatchRematch(loadedMission)
       : loadedMission;
     setMatchMission(resumableMission);
+    setFirstTryStreak(getCurrentFirstTryStreak(resumableMission));
     if (resumableMission !== loadedMission) saveMatchMission(storage, resumableMission);
     const loadedSoundPreference = loadSoundPreference(storage);
     soundEnabledRef.current = loadedSoundPreference;
@@ -277,6 +279,7 @@ export default function GestureShotDemo() {
     setLiveRoomCode(incomingRoomCode);
     const storedLiveSession = loadLiveRoomSession(storage);
     if (storedLiveSession) {
+      setInvitation(null);
       setLiveSession(storedLiveSession);
       setLiveRoomCode(storedLiveSession.roomCode);
       setWelcomeOpen(false);
@@ -557,6 +560,12 @@ export default function GestureShotDemo() {
     saveWelcomeSeen(storage);
     setWelcomeOpen(false);
     setSocialOpen(true);
+    setInvitation(null);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("lightning");
+    url.searchParams.delete("track");
+    url.searchParams.set("room", room.code);
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
   };
 
   const createLiveRoom = async () => {
@@ -609,11 +618,7 @@ export default function GestureShotDemo() {
     if (!liveRoom) return;
     const url = createLiveRoomShareUrl(window.location.href, liveRoom.code);
     setShareUrl(url);
-    try {
-      await navigator.clipboard?.writeText(url);
-    } catch {
-      // The URL remains visible and selectable.
-    }
+    await tryWriteClipboard(url, navigator.clipboard);
   };
 
   const leaveLiveRoom = () => {
@@ -627,7 +632,7 @@ export default function GestureShotDemo() {
     pendingRemoteShotRef.current = null;
     previousLiveStatusRef.current = null;
     restorePhysicalPreview(currentStage.defense, currentStage);
-    setDefenseMode("open");
+    setDefenseMode(currentStage.defense);
     setSocialOpen(true);
     const url = new URL(window.location.href);
     url.searchParams.delete("room");
@@ -689,11 +694,7 @@ export default function GestureShotDemo() {
     const nextInvitation = { seed: createLightningSeed(), track: tableTrack } satisfies LightningInvitation;
     const url = createLightningShareUrl(window.location.href, nextInvitation);
     setShareUrl(url);
-    try {
-      await navigator.clipboard?.writeText(url);
-    } catch {
-      // The visible URL remains selectable when clipboard access is unavailable.
-    }
+    await tryWriteClipboard(url, navigator.clipboard);
   };
 
   const continueLightningCup = () => {
@@ -709,7 +710,7 @@ export default function GestureShotDemo() {
     setShareUrl("");
     setSocialOpen(true);
     restorePhysicalPreview(currentStage.defense, currentStage);
-    setDefenseMode("open");
+    setDefenseMode(currentStage.defense);
     const url = new URL(window.location.href);
     url.searchParams.delete("lightning");
     url.searchParams.delete("track");
@@ -724,10 +725,9 @@ export default function GestureShotDemo() {
       ...standings.map((standing) => `${standing.rank}. ${standing.player.name}: ${standing.score} pts · ${standing.goals} goles · ${standing.firstTryCorrect} a la primera`),
       window.location.origin,
     ].join("\n");
-    try {
-      await navigator.clipboard?.writeText(result);
+    if (await tryWriteClipboard(result, navigator.clipboard)) {
       setShareUrl("Resultado copiado · listo para enviarlo al grupo");
-    } catch {
+    } else {
       setShareUrl(result);
     }
   };
@@ -776,10 +776,9 @@ export default function GestureShotDemo() {
       firstTryCorrect: summary.firstTryCorrect,
       origin: window.location.origin,
     });
-    try {
-      await navigator.clipboard?.writeText(result);
+    if (await tryWriteClipboard(result, navigator.clipboard)) {
       setShareUrl("Resultado copiado · listo para retar a tus amigos");
-    } catch {
+    } else {
       setShareUrl(result);
     }
   };
@@ -1136,7 +1135,7 @@ export default function GestureShotDemo() {
               <span style={{ padding: 9, borderRadius: 12, background: matchSummary.mathBonusReached ? "rgba(255,209,102,.15)" : "rgba(255,255,255,.07)", border: `1px solid ${matchSummary.mathBonusReached ? "#ffd166" : "rgba(255,255,255,.16)"}`, fontSize: 11, fontWeight: 950 }}>🎯 {matchSummary.firstTryCorrect} A LA PRIMERA<br /><small>{matchSummary.mathBonusReached ? "BONUS LOGRADO" : `META ${MATCH_MATH_BONUS}`}</small></span>
             </div>
             <button type="button" onClick={copyMatchResult} style={{ width: "100%", minHeight: 40, marginTop: 11, borderRadius: 12, border: "1px solid rgba(104,199,255,.5)", background: "rgba(104,199,255,.14)", color: "#bfe7ff", fontSize: 11, fontWeight: 950 }}>🔗 COMPARTIR MI PARTIDO</button>
-            {shareUrl && <p aria-live="polite" style={{ margin: "8px 0 0", color: "#d7e8df", fontSize: 10, overflowWrap: "anywhere" }}>{shareUrl}</p>}
+            {shareUrl && <p aria-live="polite" style={{ margin: "8px 0 0", color: "#d7e8df", fontSize: 10, overflowWrap: "anywhere", userSelect: "text", WebkitUserSelect: "text" }}>{shareUrl}</p>}
           </section>
         )}
 
@@ -1172,7 +1171,7 @@ export default function GestureShotDemo() {
               ))}
             </div>
             <button onClick={copyLightningResult} style={{ width: "100%", minHeight: 40, marginTop: 11, borderRadius: 12, border: "1px solid rgba(255,255,255,.3)", background: "rgba(104,199,255,.16)", color: "#bfe6ff", fontSize: 11, fontWeight: 950 }}>COMPARTIR RESULTADO</button>
-            {shareUrl && <p aria-live="polite" style={{ margin: "8px 0 0", color: "#d7e8df", fontSize: 10, overflowWrap: "anywhere" }}>{shareUrl}</p>}
+            {shareUrl && <p aria-live="polite" style={{ margin: "8px 0 0", color: "#d7e8df", fontSize: 10, overflowWrap: "anywhere", userSelect: "text", WebkitUserSelect: "text" }}>{shareUrl}</p>}
           </section>
         )}
 
@@ -1266,7 +1265,7 @@ export default function GestureShotDemo() {
                     <small style={{ color: "#c8d9e2" }}>{liveRoom.players.length}/4 jugadores · tres remates · mismas multiplicaciones</small>
                   </div>
                   <button type="button" onClick={shareLiveRoom} style={{ width: "100%", minHeight: 43, marginTop: 10, borderRadius: 13, border: "1px solid rgba(104,199,255,.5)", background: "rgba(104,199,255,.12)", color: "#bfe7ff", fontSize: 12, fontWeight: 950 }}>🔗 COPIAR ENLACE DE LA SALA</button>
-                  {shareUrl && <p aria-live="polite" style={{ margin: "8px 0 0", padding: 9, borderRadius: 10, background: "rgba(0,0,0,.22)", color: "#d7e8df", fontSize: 10, overflowWrap: "anywhere" }}>Enlace listo: {shareUrl}</p>}
+                  {shareUrl && <p aria-live="polite" style={{ margin: "8px 0 0", padding: 9, borderRadius: 10, background: "rgba(0,0,0,.22)", color: "#d7e8df", fontSize: 10, overflowWrap: "anywhere", userSelect: "text", WebkitUserSelect: "text" }}>Enlace listo: {shareUrl}</p>}
                   <div aria-label="Marcador de la sala" style={{ display: "grid", gap: 7, marginTop: 12 }}>
                     {liveRoom.players.map((player, index) => (
                       <div key={player.id} style={{ display: "grid", gridTemplateColumns: "30px 1fr auto", alignItems: "center", gap: 8, padding: "9px 10px", borderRadius: 13, background: player.id === liveSession?.playerId ? "rgba(255,209,102,.12)" : "rgba(255,255,255,.07)", border: `1px solid ${player.id === liveSession?.playerId ? "#ffd166" : "rgba(255,255,255,.14)"}` }}>
@@ -1350,7 +1349,7 @@ export default function GestureShotDemo() {
                   <button type="button" onClick={() => startLightningCup(playerNames)} style={{ width: "100%", minHeight: 51, marginTop: 13, borderRadius: 15, border: "2px solid rgba(255,255,255,.38)", background: "linear-gradient(180deg, #ff7a3d, #dd451f)", color: "white", fontSize: 16, fontWeight: 950, boxShadow: "0 5px 0 #972c16" }}>INICIAR COPA POR TURNOS</button>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: 8, margin: "13px 0", color: "#91a69c", fontSize: 9, fontWeight: 900 }}><span style={{ height: 1, background: "rgba(255,255,255,.15)" }} /><span>RETO ASÍNCRONO POR ENLACE</span><span style={{ height: 1, background: "rgba(255,255,255,.15)" }} /></div>
                   <button type="button" onClick={createSharedChallenge} style={{ width: "100%", minHeight: 44, borderRadius: 13, border: "1px solid rgba(104,199,255,.5)", background: "rgba(104,199,255,.12)", color: "#bfe7ff", fontSize: 13, fontWeight: 950 }}>🔗 CREAR RETO POR ENLACE</button>
-                  {shareUrl && <p aria-live="polite" style={{ margin: "9px 0 0", padding: 9, borderRadius: 10, background: "rgba(0,0,0,.22)", color: "#d7e8df", fontSize: 10, overflowWrap: "anywhere" }}>Enlace copiado: {shareUrl}</p>}
+                  {shareUrl && <p aria-live="polite" style={{ margin: "9px 0 0", padding: 9, borderRadius: 10, background: "rgba(0,0,0,.22)", color: "#d7e8df", fontSize: 10, overflowWrap: "anywhere", userSelect: "text", WebkitUserSelect: "text" }}>Enlace listo: {shareUrl}</p>}
                   <p style={{ margin: "11px 2px 0", color: "#9fb3aa", fontSize: 9, lineHeight: 1.4, textAlign: "center" }}>Sin chat, cuentas ni apellidos. Usa solo nombres o apodos acordados con un adulto.</p>
                 </div>
               )}

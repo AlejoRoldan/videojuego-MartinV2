@@ -5,6 +5,7 @@ import {
   getMatchMomentum,
   loadWelcomeSeen,
   saveWelcomeSeen,
+  tryWriteClipboard,
 } from "./experienceV12";
 
 describe("phase 12 complete experience", () => {
@@ -26,6 +27,14 @@ describe("phase 12 complete experience", () => {
     expect(saveWelcomeSeen(null)).toBe(false);
     expect(loadWelcomeSeen({ getItem: () => { throw new Error("blocked"); }, setItem: () => undefined })).toBe(false);
     expect(saveWelcomeSeen({ getItem: () => null, setItem: () => { throw new Error("full"); } })).toBe(false);
+  });
+
+  it("reports clipboard success only after the browser confirms the write", async () => {
+    const writeText = vi.fn(async () => undefined);
+    expect(await tryWriteClipboard("reto", { writeText })).toBe(true);
+    expect(writeText).toHaveBeenCalledWith("reto");
+    expect(await tryWriteClipboard("reto", null)).toBe(false);
+    expect(await tryWriteClipboard("reto", { writeText: async () => { throw new Error("blocked"); } })).toBe(false);
   });
 
   it("raises match intensity without overriding the decisive fifth shot", () => {

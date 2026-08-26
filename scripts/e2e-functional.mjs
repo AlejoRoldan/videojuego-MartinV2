@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const APP_URL = process.env.E2E_FUNCTIONAL_BASE_URL ?? "http://127.0.0.1:4174";
+const APP_URL = process.env.E2E_FUNCTIONAL_BASE_URL ?? "http://127.0.0.1:4174/?legacy=1";
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
