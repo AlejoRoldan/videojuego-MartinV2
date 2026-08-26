@@ -15,8 +15,12 @@ import DefeatScreen from "./game/screens/DefeatScreen";
 import ProgressScreen from "./game/screens/ProgressScreen";
 import ProfileScreen from "./game/screens/ProfileScreen";
 import TutorialScreen from "./game/screens/TutorialScreen";
+import MathPowerOverlay from "./game/screens/MathPowerOverlay";
 import { AnimatePresence, motion } from "framer-motion";
 import ErrorBoundary from "./components/ErrorBoundary";
+import ShotPhysicsLab from "./game/v10/ShotPhysicsLab";
+import V10FieldPreview from "./game/v10/V10FieldPreview";
+import GestureShotDemo from "./game/v10/GestureShotDemo";
 
 function GameRouter() {
   const { state } = useGame();
@@ -58,19 +62,35 @@ function GameRouter() {
           {screenMap[state.screen] ?? <HomeScreen />}
         </motion.div>
       </AnimatePresence>
+      <MathPowerOverlay />
     </div>
   );
 }
 
 function App() {
+  const searchParams = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search)
+    : new URLSearchParams();
+  const showPhysicsLab = searchParams.get("physicsLab") === "1";
+  const showV10Preview = searchParams.get("v10Preview") === "1";
+  const showLegacyGame = searchParams.get("legacy") === "1";
+
   return (
     <ErrorBoundary>
       <ThemeProvider defaultTheme="dark">
         <TooltipProvider>
           <Toaster />
-          <GameProvider>
-            <GameRouter />
-          </GameProvider>
+          {showV10Preview ? (
+            <V10FieldPreview />
+          ) : showPhysicsLab ? (
+            <ShotPhysicsLab />
+          ) : showLegacyGame ? (
+            <GameProvider>
+              <GameRouter />
+            </GameProvider>
+          ) : (
+            <GestureShotDemo />
+          )}
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>

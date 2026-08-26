@@ -1,0 +1,42 @@
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
+import GestureShotDemo from "./GestureShotDemo";
+
+describe("V10 gesture demo", () => {
+  it("renders campaign progression and distinct shot conditions without coordinates", () => {
+    const html = renderToStaticMarkup(<GestureShotDemo />);
+    const visibleText = html.replace(/<!-- -->/g, "").replace(/<[^>]+>/g, "");
+    expect(visibleText).toContain("Tiro LibreMatemático");
+    expect(visibleText).toContain("CAMINO AL 10 · ETAPA 1/5");
+    expect(html).toContain('data-v12-welcome="true"');
+    expect(html).toContain("APRENDE · REMATA · COMPARTE");
+    expect(html).toContain("JUGAR · CANCHA DEL BARRIO");
+    expect(html).toContain("COMPETIR CON AMIGOS");
+    expect(html).toContain("Calcula");
+    expect(html).toContain("Desliza");
+    expect(html).toContain("Curva");
+    expect(html).toContain('data-match-momentum="true"');
+    expect(html).toContain("PRIMER SILBATAZO");
+    expect(html).toContain("Abrir juegos con amigos");
+    expect(html).toContain("Abrir menú principal");
+    expect(html).toContain("Silenciar sonido");
+    expect(html).toContain('data-match-scoreboard="true"');
+    expect(html).toContain("Tiro 1/5");
+    expect(html).toContain("0/2 GOLES");
+    expect(html).toContain("0/3 PRIMERA");
+    expect(html).toContain("PARTIDO 1");
+    expect(html).toContain("PRIMER SILBATAZO");
+    expect(html).toContain("TABLA DEL 2");
+    expect(html).toContain("Control de fuerza");
+    expect(html).toContain('data-stage-scenario="true"');
+    expect(visibleText).toContain("16.2 m");
+    expect(html).toContain("Cancha del barrio");
+    expect(html).toContain("VER MAPA Y ESTADIOS");
+    expect(html).toContain("Primero calcula");
+    expect(html).toContain("Arco libre");
+    expect(html).toContain('data-swipe-surface="true"');
+    expect(html.toLowerCase()).not.toContain("coordenada");
+    expect(html).not.toMatch(/\(-?\d+,\s*-?\d+\)/);
+  });
+});

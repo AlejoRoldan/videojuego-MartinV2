@@ -1,7 +1,7 @@
 // =============================================================
 // TIRO LIBRE MATEMÁTICO — Profile Screen v2
 // Design: Pixel Champions — Player card and customization
-// FIXES: All buttons use onPointerDown + touchAction:manipulation + sounds
+// FIXES: Semantic click activation + touchAction:manipulation + sounds
 // =============================================================
 
 import { motion } from "framer-motion";
@@ -9,6 +9,7 @@ import { useGame } from "../engine/GameContext";
 import { ArrowLeft } from "lucide-react";
 import { useState } from "react";
 import { sounds } from "../engine/soundSystem";
+import { resetStoredProgress } from "../engine/profileMigration";
 
 const PLAYER_IMG = "https://d2xsxph8kpxj0f.cloudfront.net/310519663638628604/YvKFUvGtEph4XyT2Rde5AJ/game-player-SZu757xkaDBb7ZA9f4TAtJ.webp";
 
@@ -52,7 +53,8 @@ export default function ProfileScreen() {
         style={{ paddingTop: "max(24px, env(safe-area-inset-top, 24px))" }}
       >
         <button
-          onPointerDown={() => { sounds.click(); goToScreen("home"); }}
+          onClick={() => { sounds.click(); goToScreen("home"); }}
+          aria-label="Volver al inicio"
           className="w-12 h-12 rounded-xl flex items-center justify-center active:scale-95"
           style={{
             background: "rgba(255,255,255,0.1)",
@@ -109,7 +111,7 @@ export default function ProfileScreen() {
                     maxLength={12}
                   />
                   <button
-                    onPointerDown={handleSaveName}
+                    onClick={handleSaveName}
                     className="px-3 py-1 rounded-lg font-black text-sm text-white"
                     style={{ background: "#2ECC40", touchAction: "manipulation" }}
                   >
@@ -120,7 +122,7 @@ export default function ProfileScreen() {
                 <div
                   className="text-2xl font-black text-white flex items-center gap-2"
                   style={{ fontFamily: "'Fredoka One', cursive", touchAction: "manipulation", cursor: "pointer" }}
-                  onPointerDown={() => { sounds.click(); setEditingName(true); }}
+                  onClick={() => { sounds.click(); setEditingName(true); }}
                 >
                   {playerProfile.name}
                   <span className="text-white/50 text-sm">✏️</span>
@@ -180,14 +182,14 @@ export default function ProfileScreen() {
           <div className="grid grid-cols-4 gap-2">
             {BALL_OPTIONS.map((ball) => {
               const canAfford = playerProfile.coins >= ball.cost;
-              const isSelected = (playerProfile as any).equippedBall === ball.id || ball.id === "default";
+              const isSelected = playerProfile.equippedBall === ball.id || ball.id === "default";
               return (
                 <button
                   key={ball.id}
-                  onPointerDown={() => {
+                  onClick={() => {
                     if (canAfford) {
                       sounds.click();
-                      updateProfile({ equippedBall: ball.id } as any);
+                      updateProfile({ equippedBall: ball.id });
                     }
                   }}
                   className="rounded-xl p-2 flex flex-col items-center gap-1 active:scale-95"
@@ -217,9 +219,9 @@ export default function ProfileScreen() {
           transition={{ delay: 0.3 }}
         >
           <button
-            onPointerDown={() => {
+            onClick={() => {
               if (confirm("¿Resetear todo el progreso?")) {
-                localStorage.removeItem("tlm_profile");
+                resetStoredProgress();
                 window.location.reload();
               }
             }}

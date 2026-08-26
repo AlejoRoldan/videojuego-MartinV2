@@ -1,0 +1,1387 @@
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { sounds } from "../engine/soundSystem";
+import StadiumCanvas from "./StadiumCanvas";
+import {
+  resolveFootballShot,
+  type DefenseMode,
+  type FootballOutcome,
+  type ResolvedFootballShot,
+} from "./footballCollisions";
+import { continueFlightWithSpin, createInteractiveShotConfig } from "./midFlightSpin";
+import { selectAdaptiveMultiplicationChallenge } from "./adaptiveMultiplication";
+import {
+  MATCH_GOAL_BONUS,
+  MATCH_MATH_BONUS,
+  MATCH_SHOT_LIMIT,
+  createMatchMission,
+  getCurrentFirstTryStreak,
+  getMatchMissionSummary,
+  loadMatchMission,
+  recordMatchShot,
+  saveMatchMission,
+  startMatchRematch,
+  type MatchMissionV1,
+} from "./matchMission";
+import {
+  createDefaultMultiplicationProgress,
+  loadMultiplicationProgress,
+  recordCompletedMultiplicationRound,
+  saveMultiplicationProgress,
+  type MultiplicationProgressV2,
+  type TrackMasteryLevel,
+} from "./multiplicationProgress";
+import { evaluateMultiplicationAnswer, type MultiplicationTrack } from "./multiplicationRound";
+import { curveFromSwipe, getForceBand, launchFromSwipe, type GesturePoint, type LaunchGesture } from "./shotGesture";
+import { simulateShot, velocityFromAngles, type ShotPhysicsConfig, type ShotPhysicsResult } from "./shotPhysics3d";
+import {
+  getStadiumFeedback,
+  loadSoundPreference,
+  saveSoundPreference,
+  type StadiumAudioCue,
+  type StadiumFeedback,
+} from "./stadiumAtmosphere";
+import {
+  LIGHTNING_MAX_PLAYERS,
+  LIGHTNING_SHOTS_PER_PLAYER,
+  clearLightningCup,
+  createLightningCup,
+  createLightningSeed,
+  createLightningShareUrl,
+  getActiveLightningPlayer,
+  getLightningChallenge,
+  getLightningStandings,
+  loadLightningCup,
+  readLightningInvitation,
+  recordLightningShot,
+  saveLightningCup,
+  type LightningCupV1,
+  type LightningInvitation,
+} from "./lightningCup";
+import {
+  LIVE_ROOM_PLAYER_COLORS,
+  clearLiveRoomSession,
+  createLiveRoomShareUrl,
+  createRemoteLiveRoom,
+  fetchRemoteLiveRoom,
+  getLiveRoomChallenge,
+  joinRemoteLiveRoom,
+  loadLiveRoomSession,
+  readLiveRoomInvitation,
+  saveLiveRoomSession,
+  sanitizeLiveRoomCode,
+  startRemoteLiveRoom,
+  submitRemoteLiveShot,
+  type LiveRoomSession,
+  type LiveRoomSnapshot,
+} from "./liveRoom";
+import { createMatchShareText, getMatchMomentum, loadWelcomeSeen, saveWelcomeSeen, tryWriteClipboard } from "./experienceV12";
+import {
+  CAMPAIGN_STAGES,
+  createCampaignChallenge,
+  createCampaignProgress,
+  getCampaignCompletionPercent,
+  getCampaignStage,
+  getCampaignTotalStars,
+  getNextCampaignStage,
+  getStageAimOffsetDegrees,
+  isCampaignStageUnlocked,
+  loadCampaignProgress,
+  recordCampaignMatch,
+  saveCampaignProgress,
+  selectCampaignStage,
+  type CampaignProgressV1,
+  type CampaignStage,
+  type CampaignStageId,
+} from "./campaignProgress";
+
+type DemoPhase = "ready" | "flight" | "result";
+
+interface DragState {
+  pointerId: number;
+  mode: "launch" | "curve";
+  start: GesturePoint;
+  current: GesturePoint;
+  viewport: { width: number; height: number };
+}
+
+function createStageShotConfig(speedMps: number, elevationDegrees: number, yawDegrees: number, stage: CampaignStage): ShotPhysicsConfig {
+  const aimedYaw = yawDegrees + getStageAimOffsetDegrees(stage);
+  const config = createInteractiveShotConfig(speedMps, elevationDegrees, aimedYaw, stage.distanceM);
+  return {
+    ...config,
+    initialPositionM: { ...config.initialPositionM, x: stage.startXM },
+    initialVelocityMps: velocityFromAngles(speedMps, elevationDegrees, aimedYaw),
+  };
+}
+
+const DEFAULT_STAGE = CAMPAIGN_STAGES[0];
+const COMPETITIVE_STAGE: CampaignStage = {
+  ...CAMPAIGN_STAGES[1],
+  name: "Arena relámpago",
+  competition: "Mismas condiciones",
+  distanceM: 18.3,
+  startXM: 0,
+  positionLabel: "Frontal",
+  defense: "keeper",
+  defenseLabel: "Arquero",
+  technicalSkill: "Precisión",
+  theme: "night",
+};
+const DEFAULT_CONFIG = createStageShotConfig(24, 17, 0, DEFAULT_STAGE);
+const CELEBRATION_PIECES = Array.from({ length: 14 }, (_, index) => ({
+  left: `${5 + ((index * 31) % 90)}%`,
+  delay: `${(index % 5) * 70}ms`,
+  color: ["#ffd166", "#72f2a1", "#ff7a3d", "#68c7ff"][index % 4],
+}));
+
+const MASTERY_LABELS: Record<TrackMasteryLevel, string> = {
+  discovering: "Descubriendo",
+  practicing: "Practicando",
+  mastering: "Dominando",
+  mastered: "Dominada",
+};
+
+function getBrowserStorage(): Storage | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function getResultCopy(outcome: FootballOutcome) {
+  if (outcome === "goal") return { title: "¡GOL!", detail: "La red frenó el balón como en un remate real.", accent: "#72f2a1" };
+  if (outcome === "saved") return { title: "¡Atajó!", detail: "Busca un rincón más lejano del arquero.", accent: "#68c7ff" };
+  if (outcome === "blocked") return { title: "¡Barrera!", detail: "Dale más altura o curva el tiro alrededor.", accent: "#ffd166" };
+  if (outcome === "post") return { title: "¡Al palo!", detail: "Faltaron centímetros: ajusta la dirección.", accent: "#ffbd59" };
+  if (outcome === "crossbar") return { title: "¡Travesaño!", detail: "Reduce un poco la elevación del gesto.", accent: "#ffbd59" };
+  if (outcome === "miss") return { title: "¡Afuera!", detail: "Reduce la dirección lateral o la altura.", accent: "#ff9f68" };
+  return { title: "Faltó fuerza", detail: "Desliza más rápido hacia el arco.", accent: "#ff8b8b" };
+}
+
+function getForceCopy(launch: LaunchGesture | null): string {
+  if (!launch) return "Sin patear";
+  const band = getForceBand(launch.speedMps);
+  return band === "soft" ? "Suave" : band === "controlled" ? "Controlado" : "Potente";
+}
+
+function localPoint(event: ReactPointerEvent<HTMLDivElement>): GesturePoint {
+  const bounds = event.currentTarget.getBoundingClientRect();
+  return { x: event.clientX - bounds.left, y: event.clientY - bounds.top, timeMs: performance.now() };
+}
+
+function playStadiumCue(cue: StadiumAudioCue, enabled: boolean) {
+  if (!enabled) return;
+  if (cue === "goal") sounds.goal();
+  else if (cue === "save") sounds.save();
+  else if (cue === "wall") sounds.wall();
+  else if (cue === "unlock") sounds.unlock();
+  else if (cue === "missionComplete") sounds.missionComplete();
+  else sounds.miss();
+}
+
+export default function GestureShotDemo() {
+  const initialPhysicsResult = useMemo(() => simulateShot(DEFAULT_CONFIG), []);
+  const initialResolved = useMemo(() => resolveFootballShot(initialPhysicsResult, "open", DEFAULT_CONFIG.goal), [initialPhysicsResult]);
+  const [resolvedShot, setResolvedShot] = useState<ResolvedFootballShot>(initialResolved);
+  const [defenseMode, setDefenseMode] = useState<DefenseMode>("open");
+  const [savedProgress, setSavedProgress] = useState<MultiplicationProgressV2>(() => createDefaultMultiplicationProgress());
+  const [matchMission, setMatchMission] = useState<MatchMissionV1>(() => createMatchMission());
+  const [campaignProgress, setCampaignProgress] = useState<CampaignProgressV1>(() => createCampaignProgress());
+  const [campaignOpen, setCampaignOpen] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [stadiumFeedback, setStadiumFeedback] = useState<StadiumFeedback | null>(null);
+  const [lightningCup, setLightningCup] = useState<LightningCupV1 | null>(null);
+  const [welcomeOpen, setWelcomeOpen] = useState(true);
+  const [socialOpen, setSocialOpen] = useState(false);
+  const [playerNames, setPlayerNames] = useState(["Martín", "Amigo 1"]);
+  const [invitation, setInvitation] = useState<LightningInvitation | null>(null);
+  const [shareUrl, setShareUrl] = useState("");
+  const [liveSession, setLiveSession] = useState<LiveRoomSession | null>(null);
+  const [liveRoom, setLiveRoom] = useState<LiveRoomSnapshot | null>(null);
+  const [liveRoomCode, setLiveRoomCode] = useState("");
+  const [liveBusy, setLiveBusy] = useState(false);
+  const [liveError, setLiveError] = useState("");
+  const [remoteSubmitState, setRemoteSubmitState] = useState<"idle" | "submitting" | "saved" | "error">("idle");
+  const [tableTrack, setTableTrack] = useState<MultiplicationTrack>("tables-2-5");
+  const currentStage = getCampaignStage(campaignProgress.currentStageId);
+  const adaptiveSelection = useMemo(
+    () => selectAdaptiveMultiplicationChallenge(savedProgress, tableTrack),
+    [savedProgress, tableTrack],
+  );
+  const challenge = useMemo(() => {
+    if (liveRoom && liveSession && liveRoom.status !== "waiting") return getLiveRoomChallenge(liveRoom, liveSession.playerId);
+    if (lightningCup) return getLightningChallenge(lightningCup);
+    return createCampaignChallenge(currentStage, savedProgress.tracks["tables-2-5"].roundsCompleted);
+  }, [adaptiveSelection.challenge, currentStage, lightningCup, liveRoom, liveSession, savedProgress.tracks]);
+  const [mathSolved, setMathSolved] = useState(false);
+  const [mathAttempts, setMathAttempts] = useState(0);
+  const [mathFeedback, setMathFeedback] = useState("Resuelve para habilitar el remate");
+  const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
+  const [firstTryStreak, setFirstTryStreak] = useState(0);
+  const [roundFirstTry, setRoundFirstTry] = useState<boolean | null>(null);
+  const [justUnlockedAdvanced, setJustUnlockedAdvanced] = useState(false);
+  const [phase, setPhase] = useState<DemoPhase>("ready");
+  const [progress, setProgress] = useState(0);
+  const [drag, setDrag] = useState<DragState | null>(null);
+  const [launch, setLaunch] = useState<LaunchGesture | null>(null);
+  const [spinApplied, setSpinApplied] = useState<"left" | "right" | null>(null);
+  const [hint, setHint] = useState("Resuelve la multiplicación para habilitar el tiro");
+  const frameRef = useRef<number | null>(null);
+  const physicsResultRef = useRef<ShotPhysicsResult>(initialPhysicsResult);
+  const resolvedRef = useRef<ResolvedFootballShot>(initialResolved);
+  const configRef = useRef<ShotPhysicsConfig>(DEFAULT_CONFIG);
+  const soundEnabledRef = useRef(true);
+  const questionStartedAtRef = useRef(0);
+  const mathResponseTimeMsRef = useRef(0);
+  const pendingRemoteShotRef = useRef<{ roundIndex: number; scored: boolean; firstTry: boolean; responseTimeMs: number } | null>(null);
+  const previousLiveStatusRef = useRef<LiveRoomSnapshot["status"] | null>(null);
+  const elapsedPhysicsSecondsRef = useRef(0);
+  const lastFrameMsRef = useRef(0);
+
+  const stopAnimation = () => {
+    if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+    frameRef.current = null;
+  };
+
+  useEffect(() => stopAnimation, []);
+
+  useEffect(() => {
+    const storage = getBrowserStorage();
+    const loaded = loadMultiplicationProgress(storage);
+    setSavedProgress(loaded);
+    setTableTrack("tables-2-5");
+    const loadedCampaign = loadCampaignProgress(storage);
+    const loadedStage = getCampaignStage(loadedCampaign.currentStageId);
+    const stageConfig = createStageShotConfig(24, 17, 0, loadedStage);
+    const stagePhysics = simulateShot(stageConfig);
+    const stageResolved = resolveFootballShot(stagePhysics, loadedStage.defense, stageConfig.goal);
+    setCampaignProgress(loadedCampaign);
+    setDefenseMode(loadedStage.defense);
+    setResolvedShot(stageResolved);
+    physicsResultRef.current = stagePhysics;
+    resolvedRef.current = stageResolved;
+    configRef.current = stageConfig;
+    const loadedMission = loadMatchMission(storage);
+    const resumableMission = getMatchMissionSummary(loadedMission).completed
+      ? startMatchRematch(loadedMission)
+      : loadedMission;
+    setMatchMission(resumableMission);
+    setFirstTryStreak(getCurrentFirstTryStreak(resumableMission));
+    if (resumableMission !== loadedMission) saveMatchMission(storage, resumableMission);
+    const loadedSoundPreference = loadSoundPreference(storage);
+    soundEnabledRef.current = loadedSoundPreference;
+    setSoundEnabled(loadedSoundPreference);
+    const incomingInvitation = readLightningInvitation(window.location.search);
+    setInvitation(incomingInvitation);
+    const incomingRoomCode = readLiveRoomInvitation(window.location.search);
+    setLiveRoomCode(incomingRoomCode);
+    const storedLiveSession = loadLiveRoomSession(storage);
+    if (storedLiveSession) {
+      setInvitation(null);
+      setLiveSession(storedLiveSession);
+      setLiveRoomCode(storedLiveSession.roomCode);
+      setWelcomeOpen(false);
+      setSocialOpen(true);
+    }
+    const storedCup = loadLightningCup(storage);
+    if (!storedLiveSession && storedCup?.status === "playing") {
+      setLightningCup(storedCup);
+      setTableTrack(storedCup.track);
+      setDefenseMode("keeper");
+      setWelcomeOpen(false);
+      questionStartedAtRef.current = performance.now();
+    } else if (!storedLiveSession && incomingInvitation) {
+      setTableTrack(incomingInvitation.track);
+      setWelcomeOpen(false);
+      setSocialOpen(true);
+    } else if (!storedLiveSession && incomingRoomCode) {
+      setWelcomeOpen(false);
+      setSocialOpen(true);
+    } else if (!storedLiveSession && loadWelcomeSeen(storage)) {
+      setWelcomeOpen(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!liveSession) return;
+    let cancelled = false;
+    const synchronize = async () => {
+      try {
+        const room = await fetchRemoteLiveRoom(liveSession);
+        if (!cancelled) {
+          setLiveRoom(room);
+          setLiveError("");
+        }
+      } catch (error) {
+        if (!cancelled) setLiveError(error instanceof Error ? error.message : "No pudimos actualizar la sala.");
+      }
+    };
+    void synchronize();
+    const interval = window.setInterval(synchronize, 2_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [liveSession]);
+
+  const saveRemoteShot = async () => {
+    if (!liveSession || !pendingRemoteShotRef.current) return;
+    setRemoteSubmitState("submitting");
+    try {
+      const room = await submitRemoteLiveShot(liveSession, pendingRemoteShotRef.current);
+      pendingRemoteShotRef.current = null;
+      setLiveRoom(room);
+      setRemoteSubmitState("saved");
+      const feedback = getStadiumFeedback(resolvedRef.current.outcome, {
+        matchCompleted: room.status === "completed",
+        advancedUnlocked: false,
+      });
+      setStadiumFeedback(feedback);
+      playStadiumCue(feedback.audioCue, soundEnabledRef.current);
+      const player = room.players.find((item) => item.id === liveSession.playerId);
+      setHint(room.status === "completed"
+        ? "¡Sala completada! El marcador final está listo"
+        : (player?.shotsCompleted ?? 0) >= room.shotsPerPlayer
+          ? "Terminaste tus remates · espera al resto del equipo"
+          : "Resultado guardado en la sala · prepara el siguiente remate");
+    } catch (error) {
+      setRemoteSubmitState("error");
+      setLiveError(error instanceof Error ? error.message : "No pudimos guardar el remate.");
+      setHint("No se guardó el remate · toca reintentar");
+    }
+  };
+
+  const animate = (now: number) => {
+    const deltaSeconds = Math.min(0.05, Math.max(0, (now - lastFrameMsRef.current) / 1000));
+    lastFrameMsRef.current = now;
+    elapsedPhysicsSecondsRef.current += deltaSeconds / 1.22;
+    const totalSeconds = resolvedRef.current.flightTimeSeconds;
+    const nextProgress = Math.min(1, elapsedPhysicsSecondsRef.current / totalSeconds);
+    setProgress(nextProgress);
+    if (nextProgress < 1) {
+      frameRef.current = requestAnimationFrame(animate);
+    } else {
+      frameRef.current = null;
+      if (liveRoom?.status === "playing" && liveSession) {
+        const player = liveRoom.players.find((item) => item.id === liveSession.playerId);
+        pendingRemoteShotRef.current = {
+          roundIndex: player?.shotsCompleted ?? 0,
+          scored: resolvedRef.current.outcome === "goal",
+          firstTry: roundFirstTry === true,
+          responseTimeMs: mathResponseTimeMsRef.current,
+        };
+        const feedback = getStadiumFeedback(resolvedRef.current.outcome);
+        setStadiumFeedback(feedback);
+        setPhase("result");
+        setHint("Guardando el remate en la sala…");
+        void saveRemoteShot();
+        return;
+      }
+      if (lightningCup?.status === "playing") {
+        const updatedCup = recordLightningShot(lightningCup, {
+          scored: resolvedRef.current.outcome === "goal",
+          firstTry: roundFirstTry === true,
+          responseTimeMs: mathResponseTimeMsRef.current,
+        });
+        setLightningCup(updatedCup);
+        saveLightningCup(getBrowserStorage(), updatedCup);
+        const feedback = getStadiumFeedback(resolvedRef.current.outcome, {
+          matchCompleted: updatedCup.status === "completed",
+          advancedUnlocked: false,
+        });
+        setStadiumFeedback(feedback);
+        playStadiumCue(feedback.audioCue, soundEnabledRef.current);
+        setPhase("result");
+        setHint(updatedCup.status === "completed"
+          ? "¡Copa completada! Mira el podio relámpago"
+          : `Turno terminado · sigue ${getActiveLightningPlayer(updatedCup).name}`);
+        return;
+      }
+      const recorded = recordCompletedMultiplicationRound(savedProgress, {
+        track: tableTrack,
+        firstTry: roundFirstTry === true,
+        scored: resolvedRef.current.outcome === "goal",
+        completedAt: new Date().toISOString(),
+        factors: { a: challenge.a, b: challenge.b },
+      });
+      setSavedProgress(recorded.progress);
+      saveMultiplicationProgress(getBrowserStorage(), recorded.progress);
+      const updatedMission = recordMatchShot(matchMission, {
+        scored: resolvedRef.current.outcome === "goal",
+        firstTry: roundFirstTry === true,
+      });
+      setMatchMission(updatedMission);
+      saveMatchMission(getBrowserStorage(), updatedMission);
+      const updatedSummary = getMatchMissionSummary(updatedMission);
+      if (updatedSummary.completed) {
+        const updatedCampaign = recordCampaignMatch(campaignProgress, currentStage.id, updatedSummary.stars);
+        setCampaignProgress(updatedCampaign);
+        saveCampaignProgress(getBrowserStorage(), updatedCampaign);
+      }
+      const feedback = getStadiumFeedback(resolvedRef.current.outcome, {
+        matchCompleted: updatedSummary.completed,
+        advancedUnlocked: recorded.justUnlockedAdvanced,
+      });
+      setStadiumFeedback(feedback);
+      playStadiumCue(feedback.audioCue, soundEnabledRef.current);
+      setJustUnlockedAdvanced(recorded.justUnlockedAdvanced);
+      setPhase("result");
+      setHint(updatedSummary.completed
+        ? `¡${currentStage.name} superada! Tu camino continúa`
+        : recorded.justUnlockedAdvanced ? "¡Tablas 6–9 desbloqueadas por tu progreso!" : "Observa el resultado de tu gesto");
+    }
+  };
+
+  const startFlight = (nextPhysicsResult: ShotPhysicsResult, config: ShotPhysicsConfig, nextLaunch: LaunchGesture) => {
+    stopAnimation();
+    const nextResolved = resolveFootballShot(nextPhysicsResult, defenseMode, config.goal);
+    physicsResultRef.current = nextPhysicsResult;
+    resolvedRef.current = nextResolved;
+    configRef.current = config;
+    elapsedPhysicsSecondsRef.current = 0;
+    setResolvedShot(nextResolved);
+    setLaunch(nextLaunch);
+    setSpinApplied(null);
+    setProgress(0);
+    setPhase("flight");
+    setStadiumFeedback(null);
+    setHint("¡Ahora desliza a un lado para darle efecto!");
+    if (soundEnabled) {
+      sounds.init();
+      sounds.kick();
+      sounds.whoosh();
+    }
+    lastFrameMsRef.current = performance.now();
+    frameRef.current = requestAnimationFrame(animate);
+  };
+
+  const applySpin = (sidespinRadPerSecond: number, direction: "left" | "right") => {
+    if (spinApplied || phase !== "flight") return;
+    const currentResult = physicsResultRef.current;
+    const currentProgress = elapsedPhysicsSecondsRef.current / currentResult.flightTimeSeconds;
+    if (currentProgress > 0.88) {
+      setHint("El balón ya está llegando: aplica el efecto un poco antes");
+      return;
+    }
+    const continuation = continueFlightWithSpin(currentResult, currentProgress, sidespinRadPerSecond, configRef.current);
+    const nextResolved = resolveFootballShot(continuation.result, defenseMode, configRef.current.goal);
+    physicsResultRef.current = continuation.result;
+    resolvedRef.current = nextResolved;
+    setResolvedShot(nextResolved);
+    setProgress(Math.min(1, elapsedPhysicsSecondsRef.current / nextResolved.flightTimeSeconds));
+    setSpinApplied(direction);
+    setHint(direction === "right" ? "Efecto aplicado hacia la derecha" : "Efecto aplicado hacia la izquierda");
+  };
+
+  const restorePhysicalPreview = (mode: DefenseMode, stage: CampaignStage = currentStage) => {
+    stopAnimation();
+    const previewConfig = createStageShotConfig(24, 17, 0, stage);
+    const previewPhysics = simulateShot(previewConfig);
+    const nextResolved = resolveFootballShot(previewPhysics, mode, previewConfig.goal);
+    physicsResultRef.current = previewPhysics;
+    resolvedRef.current = nextResolved;
+    configRef.current = previewConfig;
+    elapsedPhysicsSecondsRef.current = 0;
+    setResolvedShot(nextResolved);
+    setPhase("ready");
+    setProgress(0);
+    setDrag(null);
+    setLaunch(null);
+    setSpinApplied(null);
+    setStadiumFeedback(null);
+  };
+
+  const nextChallenge = () => {
+    if (soundEnabled) sounds.click();
+    setDefenseMode(currentStage.defense);
+    restorePhysicalPreview(currentStage.defense, currentStage);
+    setMathSolved(false);
+    setMathAttempts(0);
+    setSelectedAnswer(null);
+    setRoundFirstTry(null);
+    setMathFeedback("Resuelve para habilitar el remate");
+    setHint(justUnlockedAdvanced
+      ? "¡Tablas 6–9 desbloqueadas por tu progreso!"
+      : "Resuelve la multiplicación para habilitar el tiro");
+    setJustUnlockedAdvanced(false);
+  };
+
+  const prepareLightningTurn = (cup: LightningCupV1) => {
+    restorePhysicalPreview("keeper", COMPETITIVE_STAGE);
+    setDefenseMode("keeper");
+    setTableTrack(cup.track);
+    setMathSolved(false);
+    setMathAttempts(0);
+    setSelectedAnswer(null);
+    setRoundFirstTry(null);
+    setJustUnlockedAdvanced(false);
+    setMathFeedback("Resuelve para habilitar el remate");
+    mathResponseTimeMsRef.current = 0;
+    questionStartedAtRef.current = performance.now();
+    setHint(`⚡ Turno de ${getActiveLightningPlayer(cup).name} · calcula y remata`);
+  };
+
+  const prepareRemoteTurn = (room: LiveRoomSnapshot) => {
+    if (!liveSession) return;
+    const player = room.players.find((item) => item.id === liveSession.playerId);
+    if (!player || player.shotsCompleted >= room.shotsPerPlayer || room.status !== "playing") {
+      setSocialOpen(true);
+      return;
+    }
+    restorePhysicalPreview("keeper", COMPETITIVE_STAGE);
+    setDefenseMode("keeper");
+    setTableTrack(room.track);
+    setMathSolved(false);
+    setMathAttempts(0);
+    setSelectedAnswer(null);
+    setRoundFirstTry(null);
+    setJustUnlockedAdvanced(false);
+    setMathFeedback("Resuelve para habilitar el remate");
+    setRemoteSubmitState("idle");
+    setLiveError("");
+    mathResponseTimeMsRef.current = 0;
+    questionStartedAtRef.current = performance.now();
+    setSocialOpen(false);
+    setHint(`📡 ${player.nickname} · remate ${player.shotsCompleted + 1} de ${room.shotsPerPlayer}`);
+  };
+
+  const enterRemoteRoom = (session: LiveRoomSession, room: LiveRoomSnapshot) => {
+    clearLightningCup(getBrowserStorage());
+    setLightningCup(null);
+    setLiveSession(session);
+    setLiveRoom(room);
+    setLiveRoomCode(room.code);
+    setTableTrack(room.track);
+    setShareUrl("");
+    const storage = getBrowserStorage();
+    saveLiveRoomSession(storage, session);
+    saveWelcomeSeen(storage);
+    setWelcomeOpen(false);
+    setSocialOpen(true);
+    setInvitation(null);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("lightning");
+    url.searchParams.delete("track");
+    url.searchParams.set("room", room.code);
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  };
+
+  const createLiveRoom = async () => {
+    if (liveBusy) return;
+    setLiveBusy(true);
+    setLiveError("");
+    try {
+      const result = await createRemoteLiveRoom(playerNames[0] || "Martín", tableTrack);
+      enterRemoteRoom(result.session, result.room);
+    } catch (error) {
+      setLiveError(error instanceof Error ? error.message : "No pudimos crear la sala.");
+    } finally {
+      setLiveBusy(false);
+    }
+  };
+
+  const joinLiveRoom = async () => {
+    if (liveBusy) return;
+    const code = sanitizeLiveRoomCode(liveRoomCode);
+    if (code.length !== 6) {
+      setLiveError("Escribe el código de seis caracteres.");
+      return;
+    }
+    setLiveBusy(true);
+    setLiveError("");
+    try {
+      const result = await joinRemoteLiveRoom(code, playerNames[0] || "Jugador");
+      enterRemoteRoom(result.session, result.room);
+    } catch (error) {
+      setLiveError(error instanceof Error ? error.message : "No pudimos entrar a la sala.");
+    } finally {
+      setLiveBusy(false);
+    }
+  };
+
+  const startLiveRoom = async () => {
+    if (!liveSession || liveBusy) return;
+    setLiveBusy(true);
+    setLiveError("");
+    try {
+      setLiveRoom(await startRemoteLiveRoom(liveSession));
+    } catch (error) {
+      setLiveError(error instanceof Error ? error.message : "No pudimos iniciar la sala.");
+    } finally {
+      setLiveBusy(false);
+    }
+  };
+
+  const shareLiveRoom = async () => {
+    if (!liveRoom) return;
+    const url = createLiveRoomShareUrl(window.location.href, liveRoom.code);
+    setShareUrl(url);
+    await tryWriteClipboard(url, navigator.clipboard);
+  };
+
+  const leaveLiveRoom = () => {
+    clearLiveRoomSession(getBrowserStorage());
+    setLiveSession(null);
+    setLiveRoom(null);
+    setLiveRoomCode("");
+    setLiveError("");
+    setShareUrl("");
+    setRemoteSubmitState("idle");
+    pendingRemoteShotRef.current = null;
+    previousLiveStatusRef.current = null;
+    restorePhysicalPreview(currentStage.defense, currentStage);
+    setDefenseMode(currentStage.defense);
+    setSocialOpen(true);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("room");
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  };
+
+  const continueRemoteRoom = () => {
+    if (remoteSubmitState === "error") {
+      void saveRemoteShot();
+      return;
+    }
+    if (!liveRoom || !liveSession) return;
+    const player = liveRoom.players.find((item) => item.id === liveSession.playerId);
+    if (liveRoom.status === "completed" || (player?.shotsCompleted ?? 0) >= liveRoom.shotsPerPlayer) {
+      setSocialOpen(true);
+      return;
+    }
+    prepareRemoteTurn(liveRoom);
+  };
+
+  useEffect(() => {
+    const status = liveRoom?.status ?? null;
+    const previous = previousLiveStatusRef.current;
+    previousLiveStatusRef.current = status;
+    const transitionTimer = window.setTimeout(() => {
+      if (liveRoom && liveSession && status === "playing" && (previous === null || previous === "waiting")) {
+        prepareRemoteTurn(liveRoom);
+      }
+      if (liveRoom && status === "completed") setSocialOpen(true);
+    }, 0);
+    return () => window.clearTimeout(transitionTimer);
+    // Room objects refresh every two seconds; status and player identity are the transition signals.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveRoom?.status, liveSession?.playerId]);
+
+  const startLightningCup = (names: readonly string[], seed?: string) => {
+    if (soundEnabled) sounds.click();
+    const cup = createLightningCup(names, { seed, track: invitation?.track ?? tableTrack });
+    setLightningCup(cup);
+    const storage = getBrowserStorage();
+    saveLightningCup(storage, cup);
+    saveWelcomeSeen(storage);
+    setWelcomeOpen(false);
+    setSocialOpen(false);
+    setShareUrl("");
+    prepareLightningTurn(cup);
+  };
+
+  const changePlayerCount = (count: number) => {
+    const safeCount = Math.min(LIGHTNING_MAX_PLAYERS, Math.max(2, count));
+    setPlayerNames((current) => Array.from({ length: safeCount }, (_, index) => current[index] ?? `Amigo ${index}`));
+  };
+
+  const updatePlayerName = (index: number, name: string) => {
+    setPlayerNames((current) => current.map((value, itemIndex) => itemIndex === index ? name : value));
+  };
+
+  const createSharedChallenge = async () => {
+    const nextInvitation = { seed: createLightningSeed(), track: tableTrack } satisfies LightningInvitation;
+    const url = createLightningShareUrl(window.location.href, nextInvitation);
+    setShareUrl(url);
+    await tryWriteClipboard(url, navigator.clipboard);
+  };
+
+  const continueLightningCup = () => {
+    if (!lightningCup || lightningCup.status === "completed") return;
+    if (soundEnabled) sounds.click();
+    prepareLightningTurn(lightningCup);
+  };
+
+  const abandonLightningCup = () => {
+    clearLightningCup(getBrowserStorage());
+    setLightningCup(null);
+    setInvitation(null);
+    setShareUrl("");
+    setSocialOpen(true);
+    restorePhysicalPreview(currentStage.defense, currentStage);
+    setDefenseMode(currentStage.defense);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("lightning");
+    url.searchParams.delete("track");
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  };
+
+  const copyLightningResult = async () => {
+    if (!lightningCup) return;
+    const standings = getLightningStandings(lightningCup);
+    const result = [
+      "⚡ Copa relámpago · Tiro Libre Matemático",
+      ...standings.map((standing) => `${standing.rank}. ${standing.player.name}: ${standing.score} pts · ${standing.goals} goles · ${standing.firstTryCorrect} a la primera`),
+      window.location.origin,
+    ].join("\n");
+    if (await tryWriteClipboard(result, navigator.clipboard)) {
+      setShareUrl("Resultado copiado · listo para enviarlo al grupo");
+    } else {
+      setShareUrl(result);
+    }
+  };
+
+  const startSoloExperience = () => {
+    if (soundEnabled) sounds.click();
+    saveWelcomeSeen(getBrowserStorage());
+    setWelcomeOpen(false);
+    setSocialOpen(false);
+    setCampaignOpen(false);
+    setShareUrl("");
+    setTableTrack("tables-2-5");
+    setDefenseMode(currentStage.defense);
+    restorePhysicalPreview(currentStage.defense, currentStage);
+    if (getMatchMissionSummary(matchMission).completed) {
+      const nextMission = startMatchRematch(matchMission);
+      setMatchMission(nextMission);
+      saveMatchMission(getBrowserStorage(), nextMission);
+    }
+    questionStartedAtRef.current = performance.now();
+    setHint(mathSolved ? "Precisión lista: desliza desde el balón hacia el arco" : "Resuelve la multiplicación para habilitar el tiro");
+  };
+
+  const openSocialExperience = () => {
+    if (soundEnabled) sounds.click();
+    saveWelcomeSeen(getBrowserStorage());
+    setWelcomeOpen(false);
+    setCampaignOpen(false);
+    setSocialOpen(true);
+  };
+
+  const openMainMenu = () => {
+    if (phase === "flight") return;
+    if (soundEnabled) sounds.click();
+    setSocialOpen(false);
+    setCampaignOpen(false);
+    setWelcomeOpen(true);
+  };
+
+  const copyMatchResult = async () => {
+    const summary = getMatchMissionSummary(matchMission);
+    const result = createMatchShareText({
+      matchNumber: matchMission.matchNumber,
+      stars: summary.stars,
+      goals: summary.goals,
+      firstTryCorrect: summary.firstTryCorrect,
+      origin: window.location.origin,
+    });
+    if (await tryWriteClipboard(result, navigator.clipboard)) {
+      setShareUrl("Resultado copiado · listo para retar a tus amigos");
+    } else {
+      setShareUrl(result);
+    }
+  };
+
+  const startRematch = () => {
+    const nextMission = startMatchRematch(matchMission);
+    setMatchMission(nextMission);
+    saveMatchMission(getBrowserStorage(), nextMission);
+    setShareUrl("");
+    setFirstTryStreak(0);
+    nextChallenge();
+    setHint("Nueva misión: completa cinco remates y busca las dos bonificaciones");
+  };
+
+  const enterCampaignStage = (stageId: CampaignStageId) => {
+    if (phase === "flight" || !isCampaignStageUnlocked(campaignProgress, stageId)) return;
+    const stage = getCampaignStage(stageId);
+    if (stageId === currentStage.id && !getMatchMissionSummary(matchMission).completed) {
+      setCampaignOpen(false);
+      setWelcomeOpen(false);
+      setHint(`${stage.competition} · continúa tu partido`);
+      return;
+    }
+    const selectedCampaign = selectCampaignStage(campaignProgress, stageId);
+    const nextMission = matchMission.shots.length === 0 && !getMatchMissionSummary(matchMission).completed
+      ? matchMission
+      : startMatchRematch(matchMission);
+    setCampaignProgress(selectedCampaign);
+    saveCampaignProgress(getBrowserStorage(), selectedCampaign);
+    setMatchMission(nextMission);
+    saveMatchMission(getBrowserStorage(), nextMission);
+    setTableTrack("tables-2-5");
+    setDefenseMode(stage.defense);
+    restorePhysicalPreview(stage.defense, stage);
+    setMathSolved(false);
+    setMathAttempts(0);
+    setSelectedAnswer(null);
+    setRoundFirstTry(null);
+    setFirstTryStreak(0);
+    setMathFeedback("Resuelve para habilitar el remate");
+    setShareUrl("");
+    setCampaignOpen(false);
+    setWelcomeOpen(false);
+    questionStartedAtRef.current = performance.now();
+    setHint(`${stage.competition} · ${stage.objective}`);
+  };
+
+  const advanceCampaign = () => {
+    const nextStage = getNextCampaignStage(currentStage.id);
+    if (nextStage && isCampaignStageUnlocked(campaignProgress, nextStage.id)) enterCampaignStage(nextStage.id);
+    else startRematch();
+  };
+
+  const toggleSound = () => {
+    const nextEnabled = !soundEnabled;
+    if (nextEnabled) {
+      sounds.init();
+      sounds.click();
+    } else {
+      sounds.click();
+    }
+    soundEnabledRef.current = nextEnabled;
+    setSoundEnabled(nextEnabled);
+    saveSoundPreference(getBrowserStorage(), nextEnabled);
+  };
+
+  const answerMath = (answer: number) => {
+    if (mathSolved || phase !== "ready") return;
+    const evaluation = evaluateMultiplicationAnswer(challenge, answer, mathAttempts);
+    setSelectedAnswer(answer);
+    setMathAttempts(evaluation.nextAttempt);
+    setMathFeedback(evaluation.feedback);
+    if (evaluation.correct) {
+      if (soundEnabled) sounds.correct();
+      mathResponseTimeMsRef.current = questionStartedAtRef.current > 0
+        ? Math.max(0, performance.now() - questionStartedAtRef.current)
+        : 0;
+      setMathSolved(true);
+      setRoundFirstTry(evaluation.firstTry);
+      setFirstTryStreak((current) => evaluation.firstTry ? current + 1 : 0);
+      setHint(`${challenge.a} × ${challenge.b} = ${challenge.answer} · 🎯 Precisión lista`);
+    } else {
+      if (soundEnabled) sounds.wrong();
+      setFirstTryStreak(0);
+      setHint("Casi: usa la ayuda y vuelve a intentarlo");
+    }
+  };
+
+  const beginGesture = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (phase === "result" || (phase === "flight" && spinApplied)) return;
+    if (phase === "ready" && !mathSolved) {
+      setHint("Primero resuelve la multiplicación");
+      return;
+    }
+    const point = localPoint(event);
+    const bounds = event.currentTarget.getBoundingClientRect();
+    if (phase === "ready" && point.y < bounds.height * 0.48) {
+      setHint("Empieza el gesto desde la parte baja, cerca del balón");
+      return;
+    }
+    if (phase === "flight" && progress > 0.88) {
+      setHint("El efecto debe aplicarse antes de que llegue al arco");
+      return;
+    }
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDrag({
+      pointerId: event.pointerId,
+      mode: phase === "ready" ? "launch" : "curve",
+      start: point,
+      current: point,
+      viewport: { width: bounds.width, height: bounds.height },
+    });
+  };
+
+  const updateGesture = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const point = localPoint(event);
+    setDrag((current) => current ? { ...current, current: point } : null);
+  };
+
+  const finishGesture = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const end = localPoint(event);
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const viewport = { width: bounds.width, height: bounds.height };
+    if (drag.mode === "launch") {
+      const mapped = launchFromSwipe(drag.start, end, viewport);
+      if (!mapped.valid) {
+        setHint(mapped.reason === "must_swipe_up" ? "Desliza hacia arriba para levantar el balón" : "Haz un gesto un poco más largo");
+      } else {
+        const shotStage = liveRoom || lightningCup ? COMPETITIVE_STAGE : currentStage;
+        const config = createStageShotConfig(mapped.speedMps, mapped.elevationDegrees, mapped.yawDegrees, shotStage);
+        startFlight(simulateShot(config), config, mapped);
+      }
+    } else {
+      const mapped = curveFromSwipe(drag.start, end, viewport);
+      if (!mapped.valid) setHint("Para dar efecto, desliza claramente a un lado");
+      else applySpin(mapped.sidespinRadPerSecond, mapped.direction as "left" | "right");
+    }
+    setDrag(null);
+  };
+
+  const cancelGesture = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (drag?.pointerId === event.pointerId) setDrag(null);
+  };
+
+  const launchPreview = drag?.mode === "launch"
+    ? launchFromSwipe(drag.start, drag.current, drag.viewport)
+    : null;
+  const forcePercent = launchPreview?.valid ? Math.round(launchPreview.force * 100) : launch ? Math.round(launch.force * 100) : 0;
+  const resultCopy = getResultCopy(resolvedShot.outcome);
+  const gestureColor = drag?.mode === "curve" ? "#c89bff" : "#ffbd59";
+  const currentTrackProgress = savedProgress.tracks[tableTrack];
+  const matchSummary = getMatchMissionSummary(matchMission);
+  const matchMomentum = getMatchMomentum(matchMission.shots.length, firstTryStreak);
+  const hasActiveCompetitiveMatch = Boolean(liveRoom || lightningCup);
+  const activeShotStage = hasActiveCompetitiveMatch ? COMPETITIVE_STAGE : currentStage;
+  const campaignTotalStars = getCampaignTotalStars(campaignProgress);
+  const campaignCompletion = getCampaignCompletionPercent(campaignProgress);
+  const nextCampaignStage = getNextCampaignStage(currentStage.id);
+  const lightningStandings = lightningCup ? getLightningStandings(lightningCup) : [];
+  const activeLightningPlayer = lightningCup ? getActiveLightningPlayer(lightningCup) : null;
+  const activeLightningStanding = activeLightningPlayer
+    ? lightningStandings.find((standing) => standing.player.id === activeLightningPlayer.id)
+    : null;
+  const myLivePlayer = liveRoom && liveSession
+    ? liveRoom.players.find((player) => player.id === liveSession.playerId) ?? null
+    : null;
+  const liveRank = myLivePlayer && liveRoom
+    ? liveRoom.players.findIndex((player) => player.id === myLivePlayer.id) + 1
+    : 0;
+  const isLiveHost = Boolean(liveRoom && liveSession && liveRoom.hostPlayerId === liveSession.playerId);
+
+  return (
+    <main
+      data-v10-gesture-demo="true"
+      style={{ position: "fixed", inset: 0, width: "100%", minHeight: "100dvh", overflow: "hidden", background: "#06111a", color: "white", fontFamily: "Nunito, sans-serif" }}
+    >
+      <div style={{ width: "100%", height: "100dvh", maxWidth: 560, margin: "0 auto", position: "relative", overflow: "hidden", background: "#0d3824" }}>
+        <StadiumCanvas samples={resolvedShot.displaySamples} goalDistanceM={activeShotStage.distanceM} actors={resolvedShot.actors} progress={progress} theme={activeShotStage.theme} />
+        <div aria-hidden="true" style={{ position: "absolute", inset: 0, pointerEvents: "none", background: "linear-gradient(180deg, rgba(1,8,18,.72) 0%, transparent 24%, transparent 63%, rgba(1,8,16,.9) 100%)" }} />
+
+        {stadiumFeedback && stadiumFeedback.celebration !== "none" && (
+          <div className={`stadium-celebration stadium-celebration--${stadiumFeedback.celebration}`} data-stadium-celebration={stadiumFeedback.celebration} aria-hidden="true">
+            <div className="stadium-celebration__pulse" />
+            {stadiumFeedback.celebration !== "save" && CELEBRATION_PIECES.map((piece, index) => (
+              <span
+                key={`${piece.left}-${index}`}
+                className="stadium-celebration__piece"
+                style={{ left: piece.left, background: piece.color, animationDelay: piece.delay }}
+              />
+            ))}
+          </div>
+        )}
+
+        <div
+          data-swipe-surface="true"
+          role="application"
+          tabIndex={0}
+          aria-label="Control del tiro: desliza hacia arriba para patear y, durante el vuelo, desliza horizontalmente para aplicar efecto"
+          onPointerDown={beginGesture}
+          onPointerMove={updateGesture}
+          onPointerUp={finishGesture}
+          onPointerCancel={cancelGesture}
+          onKeyDown={(event) => {
+            if ((event.key === "Enter" || event.key === " ") && phase === "ready" && mathSolved) {
+              event.preventDefault();
+              const keyboardLaunch = launchFromSwipe(
+                { x: 200, y: 520, timeMs: 0 },
+                { x: 200, y: 230, timeMs: 360 },
+                { width: 400, height: 600 },
+              );
+              const shotStage = liveRoom || lightningCup ? COMPETITIVE_STAGE : currentStage;
+              const config = createStageShotConfig(keyboardLaunch.speedMps, keyboardLaunch.elevationDegrees, keyboardLaunch.yawDegrees, shotStage);
+              startFlight(simulateShot(config), config, keyboardLaunch);
+            } else if (phase === "flight" && event.key === "ArrowLeft") {
+              event.preventDefault();
+              applySpin(-88, "left");
+            } else if (phase === "flight" && event.key === "ArrowRight") {
+              event.preventDefault();
+              applySpin(88, "right");
+            } else if ((event.key === "Enter" || event.key === " ") && phase === "result") {
+              event.preventDefault();
+              if (liveRoom) continueRemoteRoom();
+              else if (lightningCup) {
+                if (lightningCup.status === "completed") setSocialOpen(true);
+                else continueLightningCup();
+              } else if (matchSummary.completed) advanceCampaign();
+              else nextChallenge();
+            }
+          }}
+          style={{ position: "absolute", inset: 0, zIndex: 6, touchAction: "none", outline: "none", cursor: phase === "ready" && mathSolved ? "grab" : phase === "flight" && !spinApplied ? "ew-resize" : "default" }}
+        />
+
+        {drag && (
+          <svg aria-hidden="true" viewBox={`0 0 ${drag.viewport.width} ${drag.viewport.height}`} preserveAspectRatio="none" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", zIndex: 8, pointerEvents: "none" }}>
+            <defs>
+              <marker id="gesture-arrow" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto">
+                <path d="M0,0 L0,6 L6,3 z" fill={gestureColor} />
+              </marker>
+            </defs>
+            <line x1={drag.start.x} y1={drag.start.y} x2={drag.current.x} y2={drag.current.y} stroke="rgba(0,0,0,.45)" strokeWidth="10" strokeLinecap="round" />
+            <line x1={drag.start.x} y1={drag.start.y} x2={drag.current.x} y2={drag.current.y} stroke={gestureColor} strokeWidth="5" strokeLinecap="round" markerEnd="url(#gesture-arrow)" />
+            <circle cx={drag.start.x} cy={drag.start.y} r="12" fill="none" stroke={gestureColor} strokeWidth="3" />
+          </svg>
+        )}
+
+        <header style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 10, padding: "max(14px, env(safe-area-inset-top, 14px)) 16px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, pointerEvents: "none" }}>
+          <div>
+            <div style={{ color: activeShotStage.accent, fontSize: 10, fontWeight: 950, letterSpacing: 1.15 }}>{hasActiveCompetitiveMatch ? "FASE 13 · COMPETENCIA" : `CAMINO AL 10 · ETAPA ${currentStage.number}/5`}</div>
+            <h1 style={{ margin: "2px 0 0", maxWidth: 200, fontSize: "clamp(18px, 5vw, 26px)", lineHeight: 1, textShadow: "0 2px 10px #000" }}>{liveRoom ? "Sala relámpago" : lightningCup ? "Copa relámpago" : currentStage.name}</h1>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+            <button onClick={() => setSocialOpen(true)} disabled={phase === "flight"} aria-label="Abrir juegos con amigos" style={{ width: 42, height: 42, borderRadius: 13, border: lightningCup || liveRoom ? "2px solid #ffd166" : "1px solid rgba(255,255,255,.34)", background: lightningCup || liveRoom ? "rgba(255,209,102,.2)" : "rgba(4,15,25,.68)", color: "white", fontSize: 18, fontWeight: 900, backdropFilter: "blur(8px)", pointerEvents: "auto" }}>{liveRoom ? "📡" : "⚡"}</button>
+            <button onClick={toggleSound} aria-pressed={soundEnabled} aria-label={soundEnabled ? "Silenciar sonido" : "Activar sonido"} style={{ width: 42, height: 42, borderRadius: 13, border: "1px solid rgba(255,255,255,.34)", background: "rgba(4,15,25,.68)", color: "white", fontSize: 18, fontWeight: 900, backdropFilter: "blur(8px)", pointerEvents: "auto" }}>{soundEnabled ? "🔊" : "🔇"}</button>
+            <button onClick={openMainMenu} disabled={phase === "flight"} aria-label="Abrir menú principal" style={{ width: 42, height: 42, borderRadius: 13, border: "1px solid rgba(255,255,255,.34)", background: "rgba(4,15,25,.68)", color: "white", fontSize: 20, fontWeight: 900, backdropFilter: "blur(8px)", pointerEvents: "auto" }}>⌂</button>
+          </div>
+        </header>
+
+        <section aria-live="polite" style={{ position: "absolute", top: "12%", left: 14, right: 14, zIndex: 10, display: "grid", justifyItems: "center", gap: 8, pointerEvents: "none" }}>
+          <div style={{ maxWidth: 390, padding: "8px 13px", borderRadius: 999, background: "rgba(3,14,23,.68)", border: `1px solid ${spinApplied ? "#c89bff" : "rgba(255,255,255,.32)"}`, color: spinApplied ? "#ead9ff" : "#f4f8f5", fontSize: 13, fontWeight: 900, textAlign: "center", textShadow: "0 1px 3px #000", backdropFilter: "blur(8px)" }}>
+            {hint}
+          </div>
+          {phase !== "ready" && (
+            <div style={{ display: "flex", gap: 6 }}>
+              <span style={{ padding: "4px 8px", borderRadius: 999, background: "rgba(0,0,0,.5)", fontSize: 11, fontWeight: 900 }}>Fuerza: {getForceCopy(launch)}</span>
+              <span style={{ padding: "4px 8px", borderRadius: 999, background: "rgba(0,0,0,.5)", fontSize: 11, fontWeight: 900 }}>{spinApplied ? `Efecto ${spinApplied === "right" ? "derecho" : "izquierdo"}` : "Sin efecto"}</span>
+            </div>
+          )}
+        </section>
+
+        {!liveRoom && !lightningCup && (
+          <div data-match-momentum="true" aria-label={`${matchMomentum.label}, intensidad ${matchMomentum.intensity} por ciento`} style={{ position: "absolute", top: "16.2%", left: "50%", zIndex: 12, width: "min(68%, 290px)", transform: "translateX(-50%)", pointerEvents: "none" }}>
+            <div style={{ padding: "3px 8px 4px", borderRadius: 999, background: "rgba(3,14,23,.82)", border: `1px solid ${matchMomentum.accent}`, color: matchMomentum.accent, fontSize: 8.5, fontWeight: 950, letterSpacing: .65, textAlign: "center", boxShadow: `0 0 ${8 + Math.round(matchMomentum.intensity / 5)}px ${matchMomentum.accent}33`, backdropFilter: "blur(8px)" }}>{matchMomentum.label}</div>
+            <div aria-hidden="true" style={{ width: "84%", height: 2, margin: "2px auto 0", overflow: "hidden", borderRadius: 99, background: "rgba(255,255,255,.12)" }}><div style={{ width: `${matchMomentum.intensity}%`, height: "100%", borderRadius: 99, background: matchMomentum.accent, transition: "width .25s ease" }} /></div>
+          </div>
+        )}
+
+        {liveRoom && myLivePlayer ? (
+          <div data-live-room-scoreboard="true" aria-label={`Sala ${liveRoom.code}: ${myLivePlayer.nickname}, remate ${Math.min(liveRoom.shotsPerPlayer, myLivePlayer.shotsCompleted + 1)} de ${liveRoom.shotsPerPlayer}`} style={{ position: "absolute", top: "18.5%", left: 14, right: 14, zIndex: 11, display: "grid", gridTemplateColumns: "1.25fr 1fr 1fr", gap: 6, pointerEvents: "none" }}>
+            <span style={{ padding: "6px 7px", borderRadius: 11, background: "rgba(3,14,23,.84)", border: `1px solid ${LIVE_ROOM_PLAYER_COLORS[myLivePlayer.colorIndex] ?? "#72f2a1"}`, color: LIVE_ROOM_PLAYER_COLORS[myLivePlayer.colorIndex] ?? "#72f2a1", textAlign: "center", fontSize: 10, fontWeight: 950, backdropFilter: "blur(8px)" }}>📡 {myLivePlayer.nickname.toUpperCase()}</span>
+            <span style={{ padding: "6px 7px", borderRadius: 11, background: "rgba(3,14,23,.78)", border: "1px solid rgba(255,255,255,.24)", textAlign: "center", fontSize: 10, fontWeight: 950, backdropFilter: "blur(8px)" }}>TIRO {myLivePlayer.shotsCompleted}/{liveRoom.shotsPerPlayer}</span>
+            <span style={{ padding: "6px 7px", borderRadius: 11, background: "rgba(3,14,23,.78)", border: "1px solid rgba(255,255,255,.24)", textAlign: "center", fontSize: 10, fontWeight: 950, backdropFilter: "blur(8px)" }}>#{liveRank || "–"} · {myLivePlayer.score} PTS</span>
+          </div>
+        ) : lightningCup && activeLightningPlayer ? (
+          <div data-lightning-scoreboard="true" aria-label={`Copa relámpago: turno de ${activeLightningPlayer.name}, ronda ${lightningCup.roundIndex + 1} de ${LIGHTNING_SHOTS_PER_PLAYER}`} style={{ position: "absolute", top: "18.5%", left: 14, right: 14, zIndex: 11, display: "grid", gridTemplateColumns: "1.25fr 1fr 1fr", gap: 6, pointerEvents: "none" }}>
+            <span style={{ padding: "6px 7px", borderRadius: 11, background: "rgba(3,14,23,.84)", border: `1px solid ${activeLightningPlayer.color}`, color: activeLightningPlayer.color, textAlign: "center", fontSize: 10, fontWeight: 950, backdropFilter: "blur(8px)" }}>⚡ {activeLightningPlayer.name.toUpperCase()}</span>
+            <span style={{ padding: "6px 7px", borderRadius: 11, background: "rgba(3,14,23,.78)", border: "1px solid rgba(255,255,255,.24)", textAlign: "center", fontSize: 10, fontWeight: 950, backdropFilter: "blur(8px)" }}>RONDA {lightningCup.roundIndex + 1}/{LIGHTNING_SHOTS_PER_PLAYER}</span>
+            <span style={{ padding: "6px 7px", borderRadius: 11, background: "rgba(3,14,23,.78)", border: "1px solid rgba(255,255,255,.24)", textAlign: "center", fontSize: 10, fontWeight: 950, backdropFilter: "blur(8px)" }}>{activeLightningStanding?.score ?? 0} PTS</span>
+          </div>
+        ) : (
+          <div data-match-scoreboard="true" aria-label={`Partido ${matchMission.matchNumber}: ${matchSummary.goals} goles y ${matchSummary.firstTryCorrect} respuestas al primer intento`} style={{ position: "absolute", top: "18.5%", left: 14, right: 14, zIndex: 11, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, pointerEvents: "none" }}>
+            <span style={{ padding: "6px 7px", borderRadius: 11, background: "rgba(3,14,23,.78)", border: `1px solid ${matchSummary.goalBonusReached ? "#72f2a1" : "rgba(255,255,255,.24)"}`, textAlign: "center", fontSize: 10, fontWeight: 950, backdropFilter: "blur(8px)" }}>⚽ {matchSummary.goals}/{MATCH_GOAL_BONUS} GOLES</span>
+            <span style={{ padding: "6px 7px", borderRadius: 11, background: "rgba(3,14,23,.78)", border: `1px solid ${matchSummary.mathBonusReached ? "#ffd166" : "rgba(255,255,255,.24)"}`, textAlign: "center", fontSize: 10, fontWeight: 950, backdropFilter: "blur(8px)" }}>🎯 {matchSummary.firstTryCorrect}/{MATCH_MATH_BONUS} PRIMERA</span>
+            <span style={{ padding: "6px 7px", borderRadius: 11, background: "rgba(3,14,23,.78)", border: "1px solid rgba(255,255,255,.24)", textAlign: "center", fontSize: 10, fontWeight: 950, backdropFilter: "blur(8px)" }}>Tiro {matchSummary.currentShot}/{MATCH_SHOT_LIMIT} · PARTIDO {matchMission.matchNumber}</span>
+          </div>
+        )}
+
+        <button type="button" data-stage-scenario="true" onClick={() => { if (!hasActiveCompetitiveMatch && phase !== "flight") setCampaignOpen(true); }} disabled={phase === "flight"} aria-label={hasActiveCompetitiveMatch ? "Condiciones de la competencia" : `Abrir mapa de campaña. Etapa ${currentStage.number}: ${currentStage.name}`} style={{ position: "absolute", top: "23%", left: 14, right: 14, zIndex: 11, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 5, minHeight: 46, padding: 5, borderRadius: 15, background: "rgba(3,14,23,.78)", border: `1px solid ${activeShotStage.accent}`, color: "white", backdropFilter: "blur(9px)", pointerEvents: "auto" }}>
+          <span style={{ display: "grid", alignContent: "center", gap: 2, padding: "3px 5px", borderRadius: 10, background: "rgba(255,255,255,.06)", fontSize: 9, fontWeight: 950 }}><small style={{ color: activeShotStage.accent, fontSize: 7.5 }}>DISTANCIA</small>{activeShotStage.distanceM.toFixed(1)} m</span>
+          <span style={{ display: "grid", alignContent: "center", gap: 2, padding: "3px 5px", borderRadius: 10, background: "rgba(255,255,255,.06)", fontSize: 9, fontWeight: 950 }}><small style={{ color: activeShotStage.accent, fontSize: 7.5 }}>POSICIÓN</small>{activeShotStage.positionLabel}</span>
+          <span style={{ display: "grid", alignContent: "center", gap: 2, padding: "3px 5px", borderRadius: 10, background: "rgba(255,255,255,.06)", fontSize: 9, fontWeight: 950 }}><small style={{ color: activeShotStage.accent, fontSize: 7.5 }}>RETO</small>{activeShotStage.defenseLabel}{!hasActiveCompetitiveMatch && <small style={{ color: "#d4e3dc", fontSize: 7 }}> · VER MAPA</small>}</span>
+        </button>
+
+        {phase === "ready" && !mathSolved && (
+          <section data-v10-multiplication-challenge="true" aria-labelledby="multiplication-question" style={{ position: "absolute", top: "31%", left: 14, right: 14, zIndex: 12, padding: "13px 14px 14px", borderRadius: 20, background: "rgba(3,13,22,.9)", border: "2px solid rgba(114,242,161,.62)", boxShadow: "0 12px 34px rgba(0,0,0,.34)", backdropFilter: "blur(12px)", pointerEvents: "auto" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 9 }}>
+              <span style={{ color: activeShotStage.accent, fontSize: 10, fontWeight: 950, letterSpacing: 1.1 }}>{liveRoom ? "SALA EN VIVO · RETO ESPEJO" : lightningCup ? "COPA JUSTA · MISMA PREGUNTA" : currentStage.competition.toUpperCase()}</span>
+              <span style={{ color: "#d6e7df", fontSize: 10, fontWeight: 900 }}>{liveRoom ? `SALA ${liveRoom.code}` : lightningCup ? `CÓDIGO ${lightningCup.seed}` : currentStage.tableLabel.toUpperCase()}</span>
+            </div>
+            <div aria-label={liveRoom || lightningCup ? "Regla de equidad: todos reciben la misma pregunta de la ronda" : `Habilidad técnica: ${currentStage.technicalSkill}`} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, margin: "-2px 0 9px", color: "#ffe4a1", fontSize: 10, fontWeight: 900, textAlign: "center" }}>
+              <span>⚡ {liveRoom && myLivePlayer ? `Remate ${myLivePlayer.shotsCompleted + 1} de ${liveRoom.shotsPerPlayer}` : lightningCup ? `Ronda ${lightningCup.roundIndex + 1} de ${LIGHTNING_SHOTS_PER_PLAYER}` : currentStage.technicalSkill}</span>
+              <span aria-hidden="true">·</span>
+              <span>{liveRoom || lightningCup ? "La precisión decide" : currentStage.objective}</span>
+            </div>
+            <h2 id="multiplication-question" style={{ margin: "2px 0 11px", textAlign: "center", fontSize: "clamp(30px, 9vw, 42px)", lineHeight: 1, letterSpacing: 1, textShadow: "0 2px 10px #000" }}>{challenge.question}</h2>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8 }}>
+              {challenge.options.map((answer) => {
+                const wasWrong = selectedAnswer === answer && answer !== challenge.answer;
+                return (
+                  <button key={answer} type="button" onClick={() => answerMath(answer)} aria-label={`Responder ${answer}`} style={{ minHeight: 47, borderRadius: 13, border: wasWrong ? "2px solid #ff8b8b" : "2px solid rgba(255,255,255,.28)", background: wasWrong ? "rgba(255,90,90,.2)" : "linear-gradient(180deg, rgba(255,255,255,.15), rgba(255,255,255,.07))", color: "white", fontSize: 21, fontWeight: 950, boxShadow: "0 3px 0 rgba(0,0,0,.28)" }}>
+                    {answer}
+                  </button>
+                );
+              })}
+            </div>
+            <p aria-live="polite" style={{ minHeight: 18, margin: "10px 0 0", color: mathAttempts > 0 ? "#ffd9a0" : "#cfe0d8", textAlign: "center", fontSize: 12, fontWeight: 850 }}>{mathFeedback}</p>
+          </section>
+        )}
+
+        {phase === "ready" && mathSolved && !drag && (
+          <div aria-hidden="true" style={{ position: "absolute", left: "50%", bottom: "22%", width: 76, height: 76, transform: "translate(-50%, 50%)", borderRadius: "50%", border: "2px solid rgba(255,189,89,.9)", boxShadow: "0 0 22px rgba(255,189,89,.42)", zIndex: 5, animation: "pulse-glow 1.4s ease-in-out infinite", pointerEvents: "none" }} />
+        )}
+
+        {phase === "result" && !liveRoom && !lightningCup && !matchSummary.completed && (
+          <section role="status" style={{ position: "absolute", top: "29%", left: "50%", transform: "translateX(-50%)", zIndex: 10, width: "min(82%, 360px)", padding: "15px 18px", textAlign: "center", borderRadius: 19, background: "rgba(3,13,20,.82)", border: `2px solid ${resultCopy.accent}`, boxShadow: `0 0 30px ${resultCopy.accent}44`, backdropFilter: "blur(10px)", pointerEvents: "none" }}>
+            <strong style={{ display: "block", color: resultCopy.accent, fontSize: 30, lineHeight: 1 }}>{resultCopy.title}</strong>
+            <span style={{ display: "block", marginTop: 6, fontSize: 14 }}>{resultCopy.detail}</span>
+            {stadiumFeedback && <span style={{ display: "block", marginTop: 8, color: "#ffe5a3", fontSize: 11, fontWeight: 900 }}>🎙️ {stadiumFeedback.announcer}</span>}
+            <span style={{ display: "block", marginTop: 8, color: "#c9d9d1", fontSize: 11, fontWeight: 900 }}>Tablas: {MASTERY_LABELS[currentTrackProgress.mastery]} · Racha {firstTryStreak}</span>
+            {justUnlockedAdvanced && <span style={{ display: "block", marginTop: 8, color: "#ffd166", fontSize: 12, fontWeight: 950 }}>🔓 NUEVO RETO: TABLAS 6–9</span>}
+          </section>
+        )}
+
+        {phase === "result" && !liveRoom && !lightningCup && matchSummary.completed && (
+          <section data-match-summary="true" role="status" style={{ position: "absolute", top: "25%", left: "50%", transform: "translateX(-50%)", zIndex: 12, width: "min(86%, 380px)", padding: "18px 18px 17px", textAlign: "center", borderRadius: 22, background: "rgba(3,13,20,.94)", border: "2px solid #ffd166", boxShadow: "0 0 38px rgba(255,209,102,.32)", backdropFilter: "blur(12px)", pointerEvents: "auto" }}>
+            <span style={{ display: "block", color: currentStage.accent, fontSize: 10, fontWeight: 950, letterSpacing: 1.35 }}>ETAPA {currentStage.number} SUPERADA · {currentStage.name.toUpperCase()}</span>
+            <strong style={{ display: "block", marginTop: 5, color: "#ffd166", fontSize: 31, lineHeight: 1 }} aria-label={`${matchSummary.stars} de 3 estrellas`}>{"★".repeat(matchSummary.stars)}<span style={{ color: "rgba(255,255,255,.24)" }}>{"★".repeat(3 - matchSummary.stars)}</span></strong>
+            <span style={{ display: "block", marginTop: 9, fontSize: 14, fontWeight: 900 }}>{matchSummary.message}</span>
+            {stadiumFeedback && <span style={{ display: "block", marginTop: 8, color: "#ffe5a3", fontSize: 11, fontWeight: 900 }}>🎙️ {stadiumFeedback.announcer}</span>}
+            <span style={{ display: "block", marginTop: 8, padding: "7px 9px", borderRadius: 11, background: "rgba(114,242,161,.1)", border: "1px solid rgba(114,242,161,.3)", color: "#bdf6d1", fontSize: 10, fontWeight: 950 }}>{nextCampaignStage ? `🔓 NUEVO ESTADIO: ${nextCampaignStage.name.toUpperCase()}` : "🏆 CAMPAÑA COMPLETADA · LA COPA ES TUYA"}</span>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 13 }}>
+              <span style={{ padding: 9, borderRadius: 12, background: matchSummary.goalBonusReached ? "rgba(114,242,161,.15)" : "rgba(255,255,255,.07)", border: `1px solid ${matchSummary.goalBonusReached ? "#72f2a1" : "rgba(255,255,255,.16)"}`, fontSize: 11, fontWeight: 950 }}>⚽ {matchSummary.goals} GOLES<br /><small>{matchSummary.goalBonusReached ? "BONUS LOGRADO" : `META ${MATCH_GOAL_BONUS}`}</small></span>
+              <span style={{ padding: 9, borderRadius: 12, background: matchSummary.mathBonusReached ? "rgba(255,209,102,.15)" : "rgba(255,255,255,.07)", border: `1px solid ${matchSummary.mathBonusReached ? "#ffd166" : "rgba(255,255,255,.16)"}`, fontSize: 11, fontWeight: 950 }}>🎯 {matchSummary.firstTryCorrect} A LA PRIMERA<br /><small>{matchSummary.mathBonusReached ? "BONUS LOGRADO" : `META ${MATCH_MATH_BONUS}`}</small></span>
+            </div>
+            <button type="button" onClick={copyMatchResult} style={{ width: "100%", minHeight: 40, marginTop: 11, borderRadius: 12, border: "1px solid rgba(104,199,255,.5)", background: "rgba(104,199,255,.14)", color: "#bfe7ff", fontSize: 11, fontWeight: 950 }}>🔗 COMPARTIR MI PARTIDO</button>
+            {shareUrl && <p aria-live="polite" style={{ margin: "8px 0 0", color: "#d7e8df", fontSize: 10, overflowWrap: "anywhere", userSelect: "text", WebkitUserSelect: "text" }}>{shareUrl}</p>}
+          </section>
+        )}
+
+        {phase === "result" && liveRoom && myLivePlayer && (
+          <section data-live-room-result="true" role="status" style={{ position: "absolute", top: "27%", left: "50%", transform: "translateX(-50%)", zIndex: 12, width: "min(86%, 380px)", padding: "17px 18px", textAlign: "center", borderRadius: 22, background: "rgba(3,13,20,.94)", border: `2px solid ${remoteSubmitState === "error" ? "#ff8b8b" : resultCopy.accent}`, boxShadow: `0 0 34px ${resultCopy.accent}44`, backdropFilter: "blur(12px)", pointerEvents: "none" }}>
+            <span style={{ display: "block", color: LIVE_ROOM_PLAYER_COLORS[myLivePlayer.colorIndex] ?? "#72f2a1", fontSize: 10, fontWeight: 950, letterSpacing: 1.25 }}>SALA {liveRoom.code} · {myLivePlayer.nickname.toUpperCase()}</span>
+            <strong style={{ display: "block", marginTop: 6, color: resultCopy.accent, fontSize: 30, lineHeight: 1 }}>{resultCopy.title}</strong>
+            <span style={{ display: "block", marginTop: 7, fontSize: 13 }}>{resultCopy.detail}</span>
+            <span style={{ display: "block", marginTop: 10, color: remoteSubmitState === "error" ? "#ffc1c1" : "#ffe5a3", fontSize: 11, fontWeight: 950 }}>{remoteSubmitState === "submitting" ? "📡 Guardando en el marcador…" : remoteSubmitState === "error" ? `⚠ ${liveError}` : `✓ Marcador actualizado · ${myLivePlayer.score} puntos`}</span>
+          </section>
+        )}
+
+        {phase === "result" && lightningCup && lightningCup.status === "playing" && (
+          <section data-lightning-turn-result="true" role="status" style={{ position: "absolute", top: "28%", left: "50%", transform: "translateX(-50%)", zIndex: 12, width: "min(86%, 380px)", padding: "17px 18px", textAlign: "center", borderRadius: 22, background: "rgba(3,13,20,.94)", border: `2px solid ${resultCopy.accent}`, boxShadow: `0 0 34px ${resultCopy.accent}44`, backdropFilter: "blur(12px)", pointerEvents: "none" }}>
+            <span style={{ display: "block", color: activeLightningPlayer?.color ?? "#ffd166", fontSize: 10, fontWeight: 950, letterSpacing: 1.25 }}>TURNO DE {lightningCup.players[(lightningCup.activePlayerIndex - 1 + lightningCup.players.length) % lightningCup.players.length]?.name.toUpperCase()}</span>
+            <strong style={{ display: "block", marginTop: 6, color: resultCopy.accent, fontSize: 30, lineHeight: 1 }}>{resultCopy.title}</strong>
+            <span style={{ display: "block", marginTop: 7, fontSize: 13 }}>{resultCopy.detail}</span>
+            <span style={{ display: "block", marginTop: 10, color: "#ffe5a3", fontSize: 12, fontWeight: 950 }}>SIGUE: {activeLightningPlayer?.name.toUpperCase()}</span>
+          </section>
+        )}
+
+        {phase === "result" && lightningCup && lightningCup.status === "completed" && (
+          <section data-lightning-podium="true" role="status" style={{ position: "absolute", top: "25%", left: "50%", transform: "translateX(-50%)", zIndex: 13, width: "min(89%, 400px)", padding: "18px", textAlign: "center", borderRadius: 23, background: "rgba(3,13,20,.96)", border: "2px solid #ffd166", boxShadow: "0 0 42px rgba(255,209,102,.34)", backdropFilter: "blur(12px)", pointerEvents: "auto" }}>
+            <span style={{ display: "block", color: "#72f2a1", fontSize: 10, fontWeight: 950, letterSpacing: 1.35 }}>COPA RELÁMPAGO COMPLETADA</span>
+            <strong style={{ display: "block", marginTop: 5, color: "#ffd166", fontSize: 26, lineHeight: 1.1 }}>🏆 PODIO DEL EQUIPO</strong>
+            <div style={{ display: "grid", gap: 7, marginTop: 13 }}>
+              {lightningStandings.map((standing) => (
+                <div key={standing.player.id} style={{ display: "grid", gridTemplateColumns: "34px 1fr auto", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 13, background: standing.rank === 1 ? "rgba(255,209,102,.16)" : "rgba(255,255,255,.07)", border: `1px solid ${standing.rank === 1 ? "#ffd166" : "rgba(255,255,255,.16)"}`, textAlign: "left" }}>
+                  <span style={{ fontSize: 18, fontWeight: 950 }}>{standing.rank === 1 ? "🥇" : standing.rank === 2 ? "🥈" : standing.rank === 3 ? "🥉" : "4"}</span>
+                  <span style={{ color: standing.player.color, fontSize: 12, fontWeight: 950 }}>{standing.player.name}<small style={{ display: "block", marginTop: 2, color: "#c8d8d0", fontSize: 9 }}>⚽ {standing.goals} · 🎯 {standing.firstTryCorrect}</small></span>
+                  <strong style={{ color: "white", fontSize: 14 }}>{standing.score} pts</strong>
+                </div>
+              ))}
+            </div>
+            <button onClick={copyLightningResult} style={{ width: "100%", minHeight: 40, marginTop: 11, borderRadius: 12, border: "1px solid rgba(255,255,255,.3)", background: "rgba(104,199,255,.16)", color: "#bfe6ff", fontSize: 11, fontWeight: 950 }}>COMPARTIR RESULTADO</button>
+            {shareUrl && <p aria-live="polite" style={{ margin: "8px 0 0", color: "#d7e8df", fontSize: 10, overflowWrap: "anywhere", userSelect: "text", WebkitUserSelect: "text" }}>{shareUrl}</p>}
+          </section>
+        )}
+
+        {campaignOpen && (
+          <section data-campaign-map="true" role="dialog" aria-modal="true" aria-labelledby="campaign-map-title" style={{ position: "absolute", inset: 0, zIndex: 50, display: "grid", alignContent: "center", padding: "max(16px, env(safe-area-inset-top, 16px)) 14px max(16px, env(safe-area-inset-bottom, 16px))", background: "linear-gradient(180deg, rgba(2,8,17,.96), rgba(3,18,24,.99))", backdropFilter: "blur(16px)", pointerEvents: "auto", overflowY: "auto" }}>
+            <div style={{ width: "100%", maxWidth: 440, margin: "0 auto", padding: 17, borderRadius: 25, border: "2px solid rgba(255,209,102,.72)", background: "rgba(7,28,35,.98)", boxShadow: "0 22px 75px rgba(0,0,0,.55)" }}>
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+                <div><span style={{ color: "#72f2a1", fontSize: 9.5, fontWeight: 950, letterSpacing: 1.2 }}>FASE 13 · CAMPAÑA</span><h2 id="campaign-map-title" style={{ margin: "3px 0 0", color: "#ffd166", fontSize: 28, lineHeight: 1 }}>Camino al 10</h2></div>
+                <button type="button" onClick={() => setCampaignOpen(false)} aria-label="Cerrar mapa de campaña" style={{ width: 40, height: 40, borderRadius: 12, border: "1px solid rgba(255,255,255,.3)", background: "rgba(255,255,255,.08)", color: "white", fontSize: 22, fontWeight: 950 }}>×</button>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 11, color: "#d6e5de", fontSize: 10, fontWeight: 950 }}><span>⭐ {campaignTotalStars}/15 ESTRELLAS</span><span>{campaignCompletion}% COMPLETADO</span></div>
+              <div aria-hidden="true" style={{ height: 7, marginTop: 6, overflow: "hidden", borderRadius: 99, background: "rgba(255,255,255,.12)" }}><div style={{ width: `${campaignCompletion}%`, height: "100%", borderRadius: 99, background: "linear-gradient(90deg, #72f2a1, #68c7ff, #ffd166)", transition: "width .25s ease" }} /></div>
+              <div style={{ display: "grid", gap: 7, marginTop: 13 }}>
+                {CAMPAIGN_STAGES.map((stage, index) => {
+                  const unlocked = isCampaignStageUnlocked(campaignProgress, stage.id);
+                  const record = campaignProgress.stages[stage.id];
+                  const current = stage.id === currentStage.id;
+                  return (
+                    <button key={stage.id} type="button" disabled={!unlocked || phase === "flight"} onClick={() => enterCampaignStage(stage.id)} aria-label={unlocked ? `Jugar ${stage.name}, ${record?.bestStars ?? 0} de 3 estrellas` : `${stage.name} bloqueada`} style={{ display: "grid", gridTemplateColumns: "34px 1fr auto", alignItems: "center", gap: 9, minHeight: 58, padding: "7px 10px", borderRadius: 15, border: `1px solid ${current ? stage.accent : unlocked ? "rgba(255,255,255,.22)" : "rgba(255,255,255,.1)"}`, background: current ? `${stage.accent}18` : unlocked ? "rgba(255,255,255,.065)" : "rgba(255,255,255,.025)", color: unlocked ? "white" : "#74847d", textAlign: "left", opacity: unlocked ? 1 : .68 }}>
+                      <span style={{ display: "grid", width: 30, height: 30, placeItems: "center", borderRadius: 99, background: unlocked ? stage.accent : "rgba(255,255,255,.1)", color: unlocked ? "#102018" : "#9aaba3", fontSize: 12, fontWeight: 950 }}>{unlocked ? stage.number : "🔒"}</span>
+                      <span style={{ minWidth: 0 }}><strong style={{ display: "block", color: current ? stage.accent : "inherit", fontSize: 12 }}>{stage.name}</strong><small style={{ display: "block", marginTop: 2, fontSize: 8.5, color: unlocked ? "#b8cac1" : "#74847d" }}>{stage.tableLabel} · {stage.distanceM.toFixed(1)} m · {stage.technicalSkill}</small></span>
+                      <span style={{ color: "#ffd166", fontSize: 11, fontWeight: 950, whiteSpace: "nowrap" }}>{unlocked ? `${"★".repeat(record?.bestStars ?? 0)}${"☆".repeat(3 - (record?.bestStars ?? 0))}` : `GANA ETAPA ${index}`}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <p style={{ margin: "10px 2px 0", color: "#9fb3aa", fontSize: 9, lineHeight: 1.35, textAlign: "center" }}>Completa un partido para abrir el siguiente estadio. Puedes regresar y mejorar tus estrellas.</p>
+            </div>
+          </section>
+        )}
+
+        {welcomeOpen && (
+          <section data-v12-welcome="true" role="dialog" aria-modal="true" aria-labelledby="v12-welcome-title" style={{ position: "absolute", inset: 0, zIndex: 40, display: "grid", alignContent: "center", padding: "max(18px, env(safe-area-inset-top, 18px)) 16px max(18px, env(safe-area-inset-bottom, 18px))", background: "radial-gradient(circle at 50% 18%, rgba(16,99,84,.45), transparent 36%), linear-gradient(180deg, rgba(2,8,17,.94), rgba(3,18,24,.985))", backdropFilter: "blur(15px)", pointerEvents: "auto", overflowY: "auto" }}>
+            <div className="v12-welcome-card" style={{ width: "100%", maxWidth: 440, margin: "0 auto", padding: "18px", borderRadius: 26, border: "2px solid rgba(255,209,102,.78)", background: "linear-gradient(160deg, rgba(9,41,42,.97), rgba(5,23,32,.98))", boxShadow: "0 24px 80px rgba(0,0,0,.55), 0 0 42px rgba(255,209,102,.12)" }}>
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+                <div>
+                  <span style={{ color: "#72f2a1", fontSize: 9.5, fontWeight: 950, letterSpacing: 1.25 }}>FASE 13 · CAMINO AL 10</span>
+                  <h2 id="v12-welcome-title" style={{ margin: "4px 0 0", color: "#ffd166", fontSize: "clamp(27px, 8vw, 35px)", lineHeight: .98 }}>Tiro Libre<br />Matemático</h2>
+                </div>
+                <button type="button" onClick={() => setWelcomeOpen(false)} aria-label="Cerrar menú principal" style={{ width: 40, height: 40, flex: "0 0 auto", borderRadius: 12, border: "1px solid rgba(255,255,255,.3)", background: "rgba(255,255,255,.08)", color: "white", fontSize: 22, fontWeight: 950 }}>×</button>
+              </div>
+              <p style={{ margin: "9px 0 12px", color: "#e8f3ed", fontSize: 14, fontWeight: 900 }}>APRENDE · REMATA · COMPARTE</p>
+
+              <div aria-label="Cómo jugar" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 7 }}>
+                {[
+                  ["1", "Calcula", "Resuelve la tabla"],
+                  ["2", "Desliza", "Elige fuerza y dirección"],
+                  ["3", "Curva", "Sorprende al arquero"],
+                ].map(([step, title, detail]) => (
+                  <div key={step} style={{ minHeight: 86, padding: "9px 7px", borderRadius: 14, background: "rgba(255,255,255,.07)", border: "1px solid rgba(255,255,255,.15)", textAlign: "center" }}>
+                    <span style={{ display: "grid", width: 23, height: 23, margin: "0 auto 5px", placeItems: "center", borderRadius: 99, background: "#ffd166", color: "#16201b", fontSize: 11, fontWeight: 950 }}>{step}</span>
+                    <strong style={{ display: "block", color: "white", fontSize: 11 }}>{title}</strong>
+                    <small style={{ display: "block", marginTop: 3, color: "#b9cbc2", fontSize: 8.5, lineHeight: 1.25 }}>{detail}</small>
+                  </div>
+                ))}
+              </div>
+
+              <button type="button" onClick={() => setCampaignOpen(true)} style={{ width: "100%", marginTop: 10, padding: "10px 11px", borderRadius: 14, background: "rgba(114,242,161,.08)", border: "1px solid rgba(114,242,161,.32)", color: "white", textAlign: "left" }}>
+                <span style={{ display: "flex", justifyContent: "space-between", gap: 8, color: "#cfe0d8", fontSize: 9.5, fontWeight: 950 }}><span>ETAPA {currentStage.number}/5 · {currentStage.name.toUpperCase()}</span><span>⭐ {campaignTotalStars}/15</span></span>
+                <span style={{ display: "block", marginTop: 4, color: currentStage.accent, fontSize: 10, fontWeight: 950 }}>VER MAPA Y ESTADIOS →</span>
+                <span aria-hidden="true" style={{ display: "block", height: 5, marginTop: 6, overflow: "hidden", borderRadius: 99, background: "rgba(255,255,255,.12)" }}><span style={{ display: "block", width: `${campaignCompletion}%`, height: "100%", borderRadius: 99, background: "linear-gradient(90deg, #72f2a1, #ffd166)" }} /></span>
+              </button>
+
+              {hasActiveCompetitiveMatch ? (
+                <button type="button" onClick={() => setWelcomeOpen(false)} style={{ width: "100%", minHeight: 51, marginTop: 12, borderRadius: 15, border: "2px solid rgba(255,255,255,.38)", background: "linear-gradient(180deg, #ff7a3d, #dd451f)", color: "white", fontSize: 15, fontWeight: 950 }}>CONTINUAR PARTIDO</button>
+              ) : (
+                <button type="button" onClick={startSoloExperience} style={{ width: "100%", minHeight: 51, marginTop: 12, borderRadius: 15, border: "2px solid rgba(255,255,255,.38)", background: "linear-gradient(180deg, #35c76e, #168746)", color: "white", fontSize: 14, fontWeight: 950, boxShadow: "0 8px 24px rgba(22,135,70,.3)" }}>⚽ JUGAR · {currentStage.name.toUpperCase()}</button>
+              )}
+              <button type="button" onClick={openSocialExperience} style={{ width: "100%", minHeight: 44, marginTop: 8, borderRadius: 13, border: "1px solid rgba(104,199,255,.5)", background: "rgba(104,199,255,.12)", color: "#bfe7ff", fontSize: 12, fontWeight: 950 }}>⚡ COMPETIR CON AMIGOS</button>
+              <p style={{ margin: "8px 2px 0", color: "#9fb3aa", fontSize: 9, lineHeight: 1.35, textAlign: "center" }}>Copa local · sala en vivo · reto por enlace<br />Sin chat, cuentas, anuncios ni ubicación.</p>
+            </div>
+          </section>
+        )}
+
+        {socialOpen && (
+          <section data-social-lobby="true" data-lightning-lobby="true" role="dialog" aria-modal="true" aria-labelledby="lightning-title" style={{ position: "absolute", inset: 0, zIndex: 30, display: "grid", alignContent: "center", padding: "max(20px, env(safe-area-inset-top, 20px)) 16px max(20px, env(safe-area-inset-bottom, 20px))", background: "linear-gradient(180deg, rgba(2,8,17,.92), rgba(3,18,24,.97))", backdropFilter: "blur(14px)", pointerEvents: "auto", overflowY: "auto" }}>
+            <div style={{ width: "100%", maxWidth: 430, margin: "0 auto", padding: "19px", borderRadius: 25, border: "2px solid rgba(255,209,102,.72)", background: "rgba(7,29,35,.96)", boxShadow: "0 20px 70px rgba(0,0,0,.48)" }}>
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+                <div>
+                  <span style={{ color: "#72f2a1", fontSize: 10, fontWeight: 950, letterSpacing: 1.3 }}>FASE 13 · COMPETENCIA SEGURA</span>
+                  <h2 id="lightning-title" style={{ margin: "4px 0 0", color: "#ffd166", fontSize: 27, lineHeight: 1 }}>{liveRoom ? "📡 Sala relámpago" : "⚡ Juega con amigos"}</h2>
+                </div>
+                <button type="button" onClick={() => setSocialOpen(false)} aria-label="Cerrar juegos con amigos" style={{ width: 40, height: 40, flex: "0 0 auto", borderRadius: 12, border: "1px solid rgba(255,255,255,.3)", background: "rgba(255,255,255,.08)", color: "white", fontSize: 22, fontWeight: 950 }}>×</button>
+              </div>
+
+              {liveRoom ? (
+                <div data-live-room-lobby="true" style={{ marginTop: 16 }}>
+                  <div style={{ padding: "13px", borderRadius: 16, background: "rgba(104,199,255,.1)", border: "1px solid rgba(104,199,255,.42)", textAlign: "center" }}>
+                    <span style={{ display: "block", color: "#bfe7ff", fontSize: 10, fontWeight: 950 }}>{liveRoom.status === "waiting" ? "SALA LISTA PARA INVITAR" : liveRoom.status === "playing" ? "PARTIDO EN CURSO" : "PARTIDO COMPLETADO"}</span>
+                    <strong style={{ display: "block", marginTop: 4, color: "white", fontSize: 27, letterSpacing: 4 }}>{liveRoom.code}</strong>
+                    <small style={{ color: "#c8d9e2" }}>{liveRoom.players.length}/4 jugadores · tres remates · mismas multiplicaciones</small>
+                  </div>
+                  <button type="button" onClick={shareLiveRoom} style={{ width: "100%", minHeight: 43, marginTop: 10, borderRadius: 13, border: "1px solid rgba(104,199,255,.5)", background: "rgba(104,199,255,.12)", color: "#bfe7ff", fontSize: 12, fontWeight: 950 }}>🔗 COPIAR ENLACE DE LA SALA</button>
+                  {shareUrl && <p aria-live="polite" style={{ margin: "8px 0 0", padding: 9, borderRadius: 10, background: "rgba(0,0,0,.22)", color: "#d7e8df", fontSize: 10, overflowWrap: "anywhere", userSelect: "text", WebkitUserSelect: "text" }}>Enlace listo: {shareUrl}</p>}
+                  <div aria-label="Marcador de la sala" style={{ display: "grid", gap: 7, marginTop: 12 }}>
+                    {liveRoom.players.map((player, index) => (
+                      <div key={player.id} style={{ display: "grid", gridTemplateColumns: "30px 1fr auto", alignItems: "center", gap: 8, padding: "9px 10px", borderRadius: 13, background: player.id === liveSession?.playerId ? "rgba(255,209,102,.12)" : "rgba(255,255,255,.07)", border: `1px solid ${player.id === liveSession?.playerId ? "#ffd166" : "rgba(255,255,255,.14)"}` }}>
+                        <span style={{ color: "#dce8e2", fontWeight: 950 }}>{index + 1}</span>
+                        <span style={{ color: LIVE_ROOM_PLAYER_COLORS[player.colorIndex] ?? "white", fontSize: 12, fontWeight: 950 }}>{player.nickname}{player.id === liveRoom.hostPlayerId ? " · anfitrión" : ""}<small style={{ display: "block", marginTop: 2, color: "#aebfb7", fontSize: 9 }}>⚽ {player.goals} · 🎯 {player.firstTryCorrect} · {player.shotsCompleted}/{liveRoom.shotsPerPlayer} tiros</small></span>
+                        <strong style={{ fontSize: 12 }}>{player.score} pts</strong>
+                      </div>
+                    ))}
+                  </div>
+                  {liveRoom.status === "waiting" && isLiveHost && (
+                    <button type="button" onClick={startLiveRoom} disabled={liveBusy || liveRoom.players.length < 2} style={{ width: "100%", minHeight: 51, marginTop: 13, borderRadius: 15, border: "2px solid rgba(255,255,255,.38)", background: liveRoom.players.length < 2 ? "rgba(255,255,255,.12)" : "linear-gradient(180deg, #32bd68, #168746)", color: liveRoom.players.length < 2 ? "#aab8b1" : "white", fontSize: 15, fontWeight: 950 }}>{liveBusy ? "INICIANDO…" : liveRoom.players.length < 2 ? "ESPERANDO A UN AMIGO" : "INICIAR PARTIDO"}</button>
+                  )}
+                  {liveRoom.status === "waiting" && !isLiveHost && <p style={{ margin: "12px 0 0", color: "#ffe5a3", fontSize: 11, fontWeight: 900, textAlign: "center" }}>Esperando a que el anfitrión inicie el partido…</p>}
+                  {liveRoom.status === "playing" && myLivePlayer && myLivePlayer.shotsCompleted < liveRoom.shotsPerPlayer && (
+                    <button type="button" onClick={() => prepareRemoteTurn(liveRoom)} style={{ width: "100%", minHeight: 49, marginTop: 13, borderRadius: 14, border: "2px solid rgba(255,255,255,.35)", background: "linear-gradient(180deg, #ff7a3d, #dd451f)", color: "white", fontSize: 15, fontWeight: 950 }}>VOLVER A MIS REMATES</button>
+                  )}
+                  {liveRoom.status === "playing" && myLivePlayer && myLivePlayer.shotsCompleted >= liveRoom.shotsPerPlayer && <p style={{ margin: "12px 0 0", color: "#ffe5a3", fontSize: 11, fontWeight: 900, textAlign: "center" }}>Tus remates terminaron. El marcador se actualiza mientras esperas al equipo.</p>}
+                  {liveRoom.status === "completed" && <p style={{ margin: "12px 0 0", color: "#72f2a1", fontSize: 12, fontWeight: 950, textAlign: "center" }}>🏆 {liveRoom.players[0]?.nickname} encabeza el marcador final</p>}
+                  {liveError && <p role="alert" style={{ margin: "10px 0 0", color: "#ffc1c1", fontSize: 11, fontWeight: 900, textAlign: "center" }}>⚠ {liveError}</p>}
+                  <button type="button" onClick={leaveLiveRoom} style={{ width: "100%", minHeight: 39, marginTop: 10, borderRadius: 12, border: "1px solid rgba(255,139,139,.4)", background: "rgba(255,90,90,.08)", color: "#ffc1c1", fontSize: 11, fontWeight: 900 }}>SALIR DE ESTA SALA</button>
+                  <p style={{ margin: "10px 2px 0", color: "#9fb3aa", fontSize: 9, lineHeight: 1.4, textAlign: "center" }}>Sin chat, cuentas ni ubicación. La sala caduca automáticamente en dos horas.</p>
+                </div>
+              ) : lightningCup ? (
+                <div style={{ marginTop: 16 }}>
+                  <p style={{ margin: "0 0 12px", color: "#d4e3dc", fontSize: 12, lineHeight: 1.45 }}>Copa {lightningCup.seed} · {lightningCup.players.length} jugador{lightningCup.players.length === 1 ? "" : "es"} · tres remates por persona.</p>
+                  <div style={{ display: "grid", gap: 7 }}>
+                    {lightningStandings.map((standing) => (
+                      <div key={standing.player.id} style={{ display: "grid", gridTemplateColumns: "28px 1fr auto", alignItems: "center", gap: 8, padding: "9px 10px", borderRadius: 13, background: "rgba(255,255,255,.07)", border: `1px solid ${standing.player.id === activeLightningPlayer?.id && lightningCup.status === "playing" ? standing.player.color : "rgba(255,255,255,.14)"}` }}>
+                        <span style={{ fontWeight: 950 }}>{standing.rank}</span>
+                        <span style={{ color: standing.player.color, fontSize: 12, fontWeight: 950 }}>{standing.player.name}</span>
+                        <span style={{ fontSize: 11, fontWeight: 950 }}>{standing.score} pts</span>
+                      </div>
+                    ))}
+                  </div>
+                  <button type="button" onClick={() => setSocialOpen(false)} style={{ width: "100%", minHeight: 48, marginTop: 13, borderRadius: 14, border: "2px solid rgba(255,255,255,.35)", background: "linear-gradient(180deg, #ff7a3d, #dd451f)", color: "white", fontSize: 15, fontWeight: 950 }}>{lightningCup.status === "completed" ? "VOLVER AL PODIO" : `CONTINUAR TURNO DE ${activeLightningPlayer?.name.toUpperCase()}`}</button>
+                  <button type="button" onClick={abandonLightningCup} style={{ width: "100%", minHeight: 39, marginTop: 8, borderRadius: 12, border: "1px solid rgba(255,139,139,.4)", background: "rgba(255,90,90,.08)", color: "#ffc1c1", fontSize: 11, fontWeight: 900 }}>ABANDONAR ESTA COPA</button>
+                </div>
+              ) : invitation ? (
+                <div style={{ marginTop: 17 }}>
+                  <div style={{ padding: "13px", borderRadius: 16, background: "rgba(104,199,255,.1)", border: "1px solid rgba(104,199,255,.42)", textAlign: "center" }}>
+                    <span style={{ display: "block", color: "#bfe7ff", fontSize: 10, fontWeight: 950 }}>TE INVITARON AL RETO</span>
+                    <strong style={{ display: "block", marginTop: 4, color: "white", fontSize: 24, letterSpacing: 3 }}>{invitation.seed}</strong>
+                    <small style={{ color: "#c8d9e2" }}>Tres preguntas y tres remates · mismas condiciones para todos</small>
+                  </div>
+                  <label style={{ display: "grid", gap: 5, marginTop: 13, color: "#dce8e2", fontSize: 11, fontWeight: 900 }}>
+                    Tu nombre o apodo
+                    <input value={playerNames[0] ?? ""} onChange={(event) => updatePlayerName(0, event.target.value)} maxLength={14} autoComplete="off" style={{ minHeight: 44, borderRadius: 12, border: "1px solid rgba(255,255,255,.28)", background: "rgba(255,255,255,.08)", color: "white", padding: "0 12px", fontSize: 15, fontWeight: 900, outline: "none" }} />
+                  </label>
+                  <button type="button" onClick={() => startLightningCup([playerNames[0] || "Jugador"], invitation.seed)} style={{ width: "100%", minHeight: 51, marginTop: 13, borderRadius: 15, border: "2px solid rgba(255,255,255,.38)", background: "linear-gradient(180deg, #32bd68, #168746)", color: "white", fontSize: 16, fontWeight: 950, boxShadow: "0 5px 0 #0b5630" }}>ACEPTAR RETO</button>
+                </div>
+              ) : (
+                <div style={{ marginTop: 15 }}>
+                  <div style={{ padding: 13, borderRadius: 17, background: "rgba(104,199,255,.09)", border: "1px solid rgba(104,199,255,.38)" }}>
+                    <span style={{ display: "block", color: "#72f2a1", fontSize: 10, fontWeight: 950, letterSpacing: 1.1 }}>SALA EN VIVO · CADA UNO DESDE SU DISPOSITIVO</span>
+                    <label style={{ display: "grid", gap: 5, marginTop: 10, color: "#dce8e2", fontSize: 10, fontWeight: 900 }}>
+                      Tu nombre o apodo
+                      <input value={playerNames[0] ?? ""} onChange={(event) => updatePlayerName(0, event.target.value)} maxLength={14} autoComplete="off" style={{ minHeight: 42, borderRadius: 11, border: "1px solid rgba(255,255,255,.28)", background: "rgba(255,255,255,.08)", color: "white", padding: "0 11px", fontSize: 14, fontWeight: 900, outline: "none" }} />
+                    </label>
+                    <button type="button" onClick={createLiveRoom} disabled={liveBusy} style={{ width: "100%", minHeight: 47, marginTop: 10, borderRadius: 14, border: "2px solid rgba(255,255,255,.36)", background: "linear-gradient(180deg, #32bd68, #168746)", color: "white", fontSize: 14, fontWeight: 950 }}>{liveBusy ? "CONECTANDO…" : "CREAR SALA EN VIVO"}</button>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 7, marginTop: 9 }}>
+                      <input aria-label="Código de la sala" value={liveRoomCode} onChange={(event) => setLiveRoomCode(sanitizeLiveRoomCode(event.target.value))} onKeyDown={(event) => { if (event.key === "Enter") void joinLiveRoom(); }} maxLength={6} autoComplete="off" inputMode="text" placeholder="CÓDIGO" style={{ minWidth: 0, minHeight: 43, borderRadius: 11, border: "1px solid rgba(104,199,255,.55)", background: "rgba(0,0,0,.22)", color: "white", padding: "0 11px", fontSize: 16, fontWeight: 950, letterSpacing: 2, textTransform: "uppercase", outline: "none" }} />
+                      <button type="button" onClick={joinLiveRoom} disabled={liveBusy || liveRoomCode.length !== 6} style={{ minWidth: 91, minHeight: 43, borderRadius: 11, border: "1px solid rgba(104,199,255,.55)", background: liveRoomCode.length === 6 ? "rgba(104,199,255,.22)" : "rgba(255,255,255,.08)", color: liveRoomCode.length === 6 ? "#dff4ff" : "#879891", fontSize: 12, fontWeight: 950 }}>ENTRAR</button>
+                    </div>
+                    {liveError && <p role="alert" style={{ margin: "9px 0 0", color: "#ffc1c1", fontSize: 10, fontWeight: 900 }}>⚠ {liveError}</p>}
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: 8, margin: "14px 0 12px", color: "#91a69c", fontSize: 9, fontWeight: 900 }}><span style={{ height: 1, background: "rgba(255,255,255,.15)" }} /><span>O JUEGUEN EN UN SOLO DISPOSITIVO</span><span style={{ height: 1, background: "rgba(255,255,255,.15)" }} /></div>
+                  <p style={{ margin: "0 0 12px", color: "#d4e3dc", fontSize: 12, lineHeight: 1.45 }}>Todos reciben la misma multiplicación en cada ronda. Ganan los goles, la precisión matemática y un pequeño bono por agilidad.</p>
+                  <div role="group" aria-label="Cantidad de jugadores" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 7 }}>
+                    {[2, 3, 4].map((count) => (
+                      <button key={count} type="button" aria-pressed={playerNames.length === count} onClick={() => changePlayerCount(count)} style={{ minHeight: 39, borderRadius: 12, border: playerNames.length === count ? "2px solid #72f2a1" : "1px solid rgba(255,255,255,.22)", background: playerNames.length === count ? "rgba(114,242,161,.14)" : "rgba(255,255,255,.06)", color: "white", fontSize: 12, fontWeight: 950 }}>{count} JUGADORES</button>
+                    ))}
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: playerNames.length > 2 ? "1fr 1fr" : "1fr", gap: 7, marginTop: 10 }}>
+                    {playerNames.map((name, index) => (
+                      <label key={index} style={{ display: "grid", gap: 4, color: "#cfe0d8", fontSize: 9, fontWeight: 900 }}>
+                        JUGADOR {index + 1}
+                        <input aria-label={`Nombre del jugador ${index + 1}`} value={name} onChange={(event) => updatePlayerName(index, event.target.value)} maxLength={14} autoComplete="off" style={{ minHeight: 41, borderRadius: 11, border: `1px solid ${["#72f2a1", "#ffd166", "#68c7ff", "#c89bff"][index]}`, background: "rgba(255,255,255,.07)", color: "white", padding: "0 10px", fontSize: 13, fontWeight: 900, outline: "none" }} />
+                      </label>
+                    ))}
+                  </div>
+                  <button type="button" onClick={() => startLightningCup(playerNames)} style={{ width: "100%", minHeight: 51, marginTop: 13, borderRadius: 15, border: "2px solid rgba(255,255,255,.38)", background: "linear-gradient(180deg, #ff7a3d, #dd451f)", color: "white", fontSize: 16, fontWeight: 950, boxShadow: "0 5px 0 #972c16" }}>INICIAR COPA POR TURNOS</button>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: 8, margin: "13px 0", color: "#91a69c", fontSize: 9, fontWeight: 900 }}><span style={{ height: 1, background: "rgba(255,255,255,.15)" }} /><span>RETO ASÍNCRONO POR ENLACE</span><span style={{ height: 1, background: "rgba(255,255,255,.15)" }} /></div>
+                  <button type="button" onClick={createSharedChallenge} style={{ width: "100%", minHeight: 44, borderRadius: 13, border: "1px solid rgba(104,199,255,.5)", background: "rgba(104,199,255,.12)", color: "#bfe7ff", fontSize: 13, fontWeight: 950 }}>🔗 CREAR RETO POR ENLACE</button>
+                  {shareUrl && <p aria-live="polite" style={{ margin: "9px 0 0", padding: 9, borderRadius: 10, background: "rgba(0,0,0,.22)", color: "#d7e8df", fontSize: 10, overflowWrap: "anywhere", userSelect: "text", WebkitUserSelect: "text" }}>Enlace listo: {shareUrl}</p>}
+                  <p style={{ margin: "11px 2px 0", color: "#9fb3aa", fontSize: 9, lineHeight: 1.4, textAlign: "center" }}>Sin chat, cuentas ni apellidos. Usa solo nombres o apodos acordados con un adulto.</p>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
+        <section style={{ position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 11, padding: "12px 16px max(18px, env(safe-area-inset-bottom, 18px))", display: "grid", gap: 9, pointerEvents: "none" }}>
+          <div style={{ padding: "11px 13px", borderRadius: 16, background: "rgba(3,14,23,.74)", border: "1px solid rgba(255,255,255,.24)", backdropFilter: "blur(9px)" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 6 }}>
+              <span style={{ fontSize: 11, fontWeight: 950, letterSpacing: 0.7 }}>FUERZA DEL GESTO</span>
+              <span style={{ color: forcePercent >= 65 ? "#ffbd59" : "#dce8e1", fontSize: 12, fontWeight: 900 }}>{forcePercent}%</span>
+            </div>
+            <div style={{ height: 9, borderRadius: 99, overflow: "hidden", background: "rgba(255,255,255,.14)" }}>
+              <div style={{ height: "100%", width: `${forcePercent}%`, borderRadius: 99, background: "linear-gradient(90deg, #72f2a1, #ffd166, #ff7b45)", transition: "width 80ms linear" }} />
+            </div>
+          </div>
+          {phase === "result" ? (
+            liveRoom ? (
+              <button onClick={continueRemoteRoom} disabled={remoteSubmitState === "submitting"} style={{ minHeight: 56, borderRadius: 17, border: "3px solid rgba(255,255,255,.4)", background: remoteSubmitState === "error" ? "linear-gradient(180deg, #d65f5f, #9f3232)" : liveRoom.status === "completed" || (myLivePlayer?.shotsCompleted ?? 0) >= liveRoom.shotsPerPlayer ? "linear-gradient(180deg, #32bd68, #168746)" : "linear-gradient(180deg, #ff7a3d, #e64921)", color: "white", fontSize: 17, fontWeight: 950, boxShadow: "0 6px 0 rgba(0,0,0,.35)", pointerEvents: "auto", opacity: remoteSubmitState === "submitting" ? .74 : 1 }}>{remoteSubmitState === "submitting" ? "GUARDANDO…" : remoteSubmitState === "error" ? "REINTENTAR ENVÍO" : liveRoom.status === "completed" || (myLivePlayer?.shotsCompleted ?? 0) >= liveRoom.shotsPerPlayer ? "VER MARCADOR" : "SIGUIENTE REMATE"}</button>
+            ) : lightningCup ? (
+              <button onClick={lightningCup.status === "completed" ? abandonLightningCup : continueLightningCup} style={{ minHeight: 56, borderRadius: 17, border: "3px solid rgba(255,255,255,.4)", background: lightningCup.status === "completed" ? "linear-gradient(180deg, #32bd68, #168746)" : "linear-gradient(180deg, #ff7a3d, #e64921)", color: "white", fontSize: 18, fontWeight: 950, boxShadow: lightningCup.status === "completed" ? "0 6px 0 #0b5630" : "0 6px 0 #9e2d17", pointerEvents: "auto" }}>{lightningCup.status === "completed" ? "NUEVA COPA" : `SIGUE ${activeLightningPlayer?.name.toUpperCase()}`}</button>
+            ) : (
+              <button onClick={matchSummary.completed ? advanceCampaign : nextChallenge} style={{ minHeight: 56, borderRadius: 17, border: "3px solid rgba(255,255,255,.4)", background: matchSummary.completed ? "linear-gradient(180deg, #32bd68, #168746)" : "linear-gradient(180deg, #ff7a3d, #e64921)", color: "white", fontSize: matchSummary.completed ? 15 : 19, fontWeight: 950, boxShadow: matchSummary.completed ? "0 6px 0 #0b5630" : "0 6px 0 #9e2d17", pointerEvents: "auto" }}>{matchSummary.completed ? nextCampaignStage ? `AVANZAR A ${nextCampaignStage.name.toUpperCase()}` : "REPETIR GRAN FINAL" : "SIGUIENTE RETO"}</button>
+            )
+          ) : (
+            <p style={{ margin: 0, textAlign: "center", color: "rgba(225,238,230,.78)", fontSize: 11, fontWeight: 800 }}>
+              {phase === "ready" ? mathSolved ? "Precisión matemática lista · ahora manda tu gesto" : "Primero calcula · luego remata" : spinApplied ? "El efecto ya fue aplicado" : "Un segundo gesto lateral curva la pelota"}
+            </p>
+          )}
+        </section>
+      </div>
+    </main>
+  );
+}

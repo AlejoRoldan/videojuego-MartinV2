@@ -25,6 +25,120 @@ export type MathConcept =
   | "velocity"
   | "tactics";
 
+export type MathChallengeType = "multiplication" | "coordinate" | "angle" | "velocity";
+export type WorldId = "tables" | "goal-map" | "ball-lab" | "stem-cup";
+export type MathPower = "precision" | "curve" | "turbo" | "perfect" | null;
+export type MathDomain = "multiplication" | "coordinate" | "angle" | "velocity";
+export type FlowTrigger = "math_struggle" | "football_struggle" | "sustained_mastery" | "recovery";
+export type FlowAxis = "assistance" | "football" | "time" | "none";
+
+export interface LevelRuntimeModifiers {
+  keeperReachMultiplier: number;
+  wallReachMultiplier: number;
+  targetSizeMultiplier: number;
+  assistanceLeadSeconds: number;
+  windMultiplier: number;
+  cooldownRemaining: number;
+}
+
+export interface ShotPerformance {
+  domain: MathDomain;
+  mathCorrect: boolean;
+  responseTimeMs: number | null;
+  assistanceStage: "none" | "hint" | "visual" | "urgent";
+  usedRetry: boolean;
+  outcome: ShotOutcome;
+  scored: boolean;
+  difficulty: "easy" | "medium" | "hard";
+}
+
+export interface PerformanceWindow {
+  shots: readonly ShotPerformance[];
+  mathSuccessRate: number | null;
+  footballSuccessRate: number | null;
+  correctMathButNoGoalCount: number;
+  consecutiveMathErrors: number;
+  consecutiveFootballMisses: number;
+  averageResponseTimeMs: number | null;
+  noHelpSuccessRate: number | null;
+}
+
+export interface FlowIntervention {
+  trigger: FlowTrigger;
+  axis: FlowAxis;
+  change: string;
+  windowMathSuccessRate: number;
+  windowFootballSuccessRate: number;
+  cooldownShots: number;
+  reason: string;
+  modifiers: Partial<LevelRuntimeModifiers>;
+}
+
+export interface BaseGameplayEvent {
+  id: string;
+  schemaVersion: 1;
+  type: string;
+  occurredAt: string;
+  sessionId: string;
+  levelId?: number;
+  worldId?: WorldId;
+}
+
+export interface MathAnsweredEvent extends BaseGameplayEvent {
+  type: "math_answered";
+  domain: MathDomain;
+  correct: boolean;
+  responseTimeMs: number;
+  assistanceStage: "none" | "hint" | "visual" | "urgent";
+  usedRetry: boolean;
+  difficulty: "easy" | "medium" | "hard";
+}
+
+export interface ShotResolvedEvent extends BaseGameplayEvent {
+  type: "shot_resolved";
+  mathCorrect: boolean;
+  targetCoord: Vec2;
+  actualCoord: Vec2;
+  outcome: ShotOutcome;
+  reasonCode: string;
+  mathPower: Exclude<MathPower, null> | null;
+  footballDifficulty: number;
+}
+
+export interface FlowInterventionEvent extends BaseGameplayEvent {
+  type: "flow_intervention";
+  trigger: FlowTrigger;
+  axis: FlowAxis;
+  change: string;
+  windowMathSuccessRate: number;
+  windowFootballSuccessRate: number;
+}
+
+export type GameplayEvent = MathAnsweredEvent | ShotResolvedEvent | FlowInterventionEvent;
+
+
+export interface TableRange {
+  min: number;
+  max: number;
+}
+
+export interface WorldConfig {
+  id: WorldId;
+  name: string;
+  icon: string;
+  description: string;
+  objective: string;
+  levelIds: number[];
+}
+export type ShotOutcome = "goal" | "saved" | "blocked" | "missed";
+export type ShotReasonCode =
+  | "clean_target"
+  | "reduced_accuracy"
+  | "wind_drift"
+  | "keeper_reach"
+  | "wall_block"
+  | "outside_goal";
+
 export interface Vec2 {
   x: number;
   y: number;
@@ -33,8 +147,8 @@ export interface Vec2 {
 export interface BallState {
   position: Vec2;
   velocity: Vec2;
-  spin: number; // -1 to 1 (left/right curve)
-  power: number; // 0 to 100
+  spin: number;
+  power: number;
   inFlight: boolean;
   trail: Vec2[];
 }
@@ -47,7 +161,7 @@ export interface GoalZone {
 }
 
 export interface GoalkeeperState {
-  position: Vec2; // -1 to 1 normalized within goal
+  position: Vec2;
   speed: number;
   direction: 1 | -1;
   diving: boolean;
@@ -56,22 +170,61 @@ export interface GoalkeeperState {
 
 export interface WallPlayer {
   id: number;
-  position: Vec2; // normalized 0-1 within wall area
-  number: number; // the multiplier number shown on them
+  position: Vec2;
+  number: number;
 }
 
 export interface MathChallenge {
-  type: "multiplication" | "coordinate" | "angle" | "velocity";
+  type: MathChallengeType;
   question: string;
   answer: number;
-  options?: number[]; // for multiple choice
-  timeLimit: number; // seconds
+  options?: number[];
+  timeLimit: number;
   hint?: string;
+  baseHint?: string;
+  assistanceStage?: "calm" | "hint" | "visual" | "urgent";
+  retryGranted?: boolean;
 }
 
-export interface ShotResult {
+export interface KeeperSnapshot {
+  position: Vec2;
+  reach: number;
+}
+
+export interface WallSnapshot {
+  position: Vec2;
+  radius: number;
+}
+
+export interface WindSnapshot {
+  x: number;
+  y: number;
+}
+
+export interface ShotInput {
+  targetCoord: Vec2;
+  gridQuadrants: 1 | 4;
+  mathCorrect: boolean;
+  basePower: number;
+  spin: number;
+  mathPower: MathPower;
+  keeper: KeeperSnapshot;
+  wall: WallSnapshot[];
+  wind: WindSnapshot;
+  seed: number;
+  runtimeModifiers?: LevelRuntimeModifiers;
+}
+
+export interface AppliedModifier {
+  id: string;
+  amount: number;
+}
+
+export interface ShotResolution {
   scored: boolean;
   targetCoord: Vec2;
+  targetPoint: Vec2;
+  landingPoint: Vec2;
   actualCoord: Vec2;
   mathCorrect: boolean;
   powerUsed: number;
@@ -80,26 +233,39 @@ export interface ShotResult {
   blockedByWall: boolean;
   trajectoryPoints: Vec2[];
   bonusMultiplier: number;
+  outcome: ShotOutcome;
+  reasonCode: ShotReasonCode;
+  appliedModifiers: AppliedModifier[];
+  input: ShotInput;
 }
+
+export type ShotResult = ShotResolution;
 
 export interface LevelConfig {
   id: number;
   name: string;
+  worldId: WorldId;
+  worldName: string;
+  worldIcon: string;
+  worldDescription: string;
+  learningObjective: string;
   concept: MathConcept;
   description: string;
-  shotsRequired: number; // shots to win
-  shotsAllowed: number; // total shots before game over
+  shotsRequired: number;
+  shotsAllowed: number;
   hasKeeper: boolean;
-  keeperSpeed: number; // 0-1
+  keeperSpeed: number;
   hasWall: boolean;
   wallCount: number;
   gridVisible: boolean;
-  gridQuadrants: 1 | 4; // 1 = first quadrant only, 4 = all quadrants
+  gridQuadrants: 1 | 4;
   mathDifficulty: "easy" | "medium" | "hard";
+  tableRange?: TableRange;
+  challengeTypes?: MathChallengeType[];
   timeBonus: boolean;
   wind: boolean;
   windStrength: number;
-  stars: [number, number, number]; // shots needed for 1, 2, 3 stars
+  stars: [number, number, number];
   unlockCondition: string;
   rewards: LevelReward;
 }
@@ -111,6 +277,7 @@ export interface LevelReward {
 }
 
 export interface PlayerProfile {
+  schemaVersion: number;
   name: string;
   level: number;
   xp: number;
@@ -125,8 +292,8 @@ export interface PlayerProfile {
   unlockedLevels: number[];
   completedLevels: Record<number, LevelProgress>;
   achievements: string[];
-  equippedBall: string;
-  equippedKit: string;
+  equippedBall?: string;
+  equippedKit?: string;
 }
 
 export interface LevelProgress {
@@ -137,12 +304,12 @@ export interface LevelProgress {
 }
 
 export interface AdaptiveDifficulty {
-  frustrationScore: number; // 0-100
-  avgResponseTime: number; // seconds
+  frustrationScore: number;
+  avgResponseTime: number;
   recentErrors: number[];
-  currentMultiplier: number; // 0.5 to 1.5 difficulty multiplier
+  currentMultiplier: number;
   hintsEnabled: boolean;
-  targetSizeMultiplier: number; // 0.5 to 1.5
+  targetSizeMultiplier: number;
 }
 
 export interface GameState {
@@ -155,6 +322,8 @@ export interface GameState {
   currentChallenge: MathChallenge | null;
   shotsScored: number;
   shotsTaken: number;
+  /** Ordered outcomes for the current level, used by the shot-by-shot HUD. */
+  shotHistory: ShotOutcome[];
   score: number;
   combo: number;
   maxCombo: number;
@@ -162,9 +331,28 @@ export interface GameState {
   phase: "aiming" | "math" | "shooting" | "result" | "celebrating";
   targetCoord: Vec2 | null;
   lastShotResult: ShotResult | null;
+  /** Explicit outcome of the latest math interaction for the pending shot. */
+  lastMathCorrect: boolean | null;
   adaptiveDifficulty: AdaptiveDifficulty;
   particles: Particle[];
   floatingTexts: FloatingText[];
+  currentMathPower: MathPower;
+  /** Consecutive fast first-attempt correct answers for the Perfect streak. */
+  perfectStreak: number;
+  /** Monotonic event key for one Math Power reward per submitted challenge. */
+  mathPowerSequence: number;
+  /** Local, in-memory gameplay events; persistence belongs to Phase 5. */
+  gameplayEvents: GameplayEvent[];
+  /** Rolling performance window used by the Phase 4 flow engine. */
+  performanceWindow: PerformanceWindow;
+  /** Runtime modifiers applied to the next resolved shot. */
+  runtimeModifiers: LevelRuntimeModifiers;
+  /** Response duration captured for the current mathematical challenge. */
+  lastMathResponseTimeMs: number | null;
+  /** Decision prepared after a shot and applied by NEXT_SHOT. */
+  pendingFlowIntervention: FlowIntervention | null;
+  /** Number of consecutive complete windows above the mastery threshold. */
+  sustainedMasteryWindows: number;
 }
 
 export interface Particle {
@@ -175,7 +363,7 @@ export interface Particle {
   vy: number;
   color: string;
   size: number;
-  life: number; // 0-1
+  life: number;
   maxLife: number;
   type: "confetti" | "star" | "spark" | "smoke" | "coin";
 }
@@ -195,10 +383,13 @@ export type GameAction =
   | { type: "SET_SCREEN"; screen: GameScreen }
   | { type: "START_LEVEL"; levelId: number }
   | { type: "SET_TARGET"; coord: Vec2 }
-  | { type: "SUBMIT_MATH"; answer: number }
-  | { type: "SHOOT" }
-  | { type: "SHOT_COMPLETE"; result: ShotResult }
-  | { type: "NEXT_SHOT" }
+  | { type: "SET_SPIN"; spin: number }
+  | { type: "SUBMIT_MATH"; answer: number; timeLeft?: number; usedRetry?: boolean; responseTimeMs?: number; event?: MathAnsweredEvent }
+  | { type: "MATH_ASSISTANCE"; stage: "hint" | "visual" | "urgent" }
+  | { type: "GRANT_MATH_RETRY"; seconds: number }
+  | { type: "SHOOT"; resolution?: ShotResolution }
+  | { type: "SHOT_COMPLETE"; result: ShotResult; events?: GameplayEvent[] }
+  | { type: "NEXT_SHOT"; flowEvent?: FlowInterventionEvent }
   | { type: "LEVEL_COMPLETE" }
   | { type: "LEVEL_FAILED" }
   | { type: "UPDATE_PHYSICS"; dt: number }

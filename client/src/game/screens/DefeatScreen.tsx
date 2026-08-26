@@ -115,7 +115,7 @@ export default function DefeatScreen() {
         >
           <motion.button
             whileTap={{ scale: 0.95 }}
-            onPointerDown={() => { sounds.click(); startLevel(levelConfig.id); }}
+            onClick={() => { sounds.click(); startLevel(levelConfig.id); }}
             className="w-full py-4 rounded-2xl font-black text-xl text-white"
             style={{
               fontFamily: "'Fredoka One', cursive",
@@ -129,7 +129,7 @@ export default function DefeatScreen() {
           </motion.button>
           <motion.button
             whileTap={{ scale: 0.95 }}
-            onPointerDown={() => { sounds.click(); goToScreen("level-select"); }}
+            onClick={() => { sounds.click(); goToScreen("level-select"); }}
             className="w-full py-4 rounded-2xl font-black text-base text-white/70"
             style={{
               background: "rgba(255,255,255,0.05)",

@@ -1,127 +1,292 @@
-// =============================================================
-// TIRO LIBRE MATEMÁTICO — Physics Engine v2
-// FIXES: shot precision, trajectory mapping, keeper logic
-// =============================================================
+// TIRO LIBRE MATEMÁTICO — Deterministic Shot Engine V9
 
-import type { Vec2, BallState, GoalkeeperState, WallPlayer, ShotResult } from "./types";
+import type {
+  AppliedModifier,
+  GoalkeeperState,
+  KeeperSnapshot,
+  MathPower,
+  ShotInput,
+  ShotReasonCode,
+  ShotResolution,
+  Vec2,
+  WallPlayer,
+} from "./types";
+import { clampGoalPoint, coordToGoalPoint, goalPointToCoord, isInsideGoal } from "./coordinates";
+import { getMathPowerModifiers } from "./mathPowers";
 
-// ── Trajectory ───────────────────────────────────────────────
+/** Shared goal-plane positions used by both rendering and collision snapshots. */
+export const KEEPER_GOAL_Y = 0.78;
+export const WALL_GOAL_Y = 0.67;
+export const WALL_PLAYER_RADIUS = 0.13;
+
 export interface PhysicsConfig {
-  power: number;    // 0-100
-  targetX: number;  // -1 to 1 (normalized goal position)
-  targetY: number;  // 0 to 1 (normalized goal position)
-  spin: number;     // -1 to 1
-  wind: number;     // -1 to 1
+  power: number;
+  targetX: number;
+  targetY: number;
+  spin: number;
+  wind: number;
+  arcBoost?: number;
+  targetPoint?: Vec2;
 }
 
-/**
- * Generates a smooth parabolic arc from the ball's starting position
- * to the target in the goal. 60 frames total.
- */
+export interface LegacyLevelConfig {
+  keeperSpeed: number;
+  hasKeeper?: boolean;
+  wind: boolean;
+  windStrength: number;
+  gridMax?: Vec2;
+  gridQuadrants?: 1 | 4;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function normalizeSeed(seed: number): number {
+  return (Math.floor(Number.isFinite(seed) ? seed : 0) >>> 0) || 1;
+}
+
+function seededRandom(seed: number): () => number {
+  let value = normalizeSeed(seed);
+  return () => {
+    value += 0x6d2b79f5;
+    let t = value;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+export function createWindSnapshot(enabled: boolean, strength: number, seed: number): { x: number; y: number } {
+  if (!enabled || strength <= 0) return { x: 0, y: 0 };
+  const random = seededRandom(normalizeSeed(seed) ^ 0x51f15e);
+  return {
+    x: (random() - 0.5) * strength * 0.22,
+    y: (random() - 0.5) * strength * 0.12,
+  };
+}
+
 export function calculateTrajectory(config: PhysicsConfig): Vec2[] {
-  const { power, targetX, targetY, spin, wind } = config;
+  const { power, targetX, targetY, spin, wind, arcBoost = 1 } = config;
   const points: Vec2[] = [];
   const steps = 60;
-
-  // Start: bottom center of the goal area (normalized 0-1 within goal)
   const startX = 0.5;
   const startY = 0.92;
-
-  // End: map normalized -1..1 target to 0.1..0.9 within goal
-  const endX = 0.5 + targetX * 0.38;
-  // Target Y: 0 = bottom, 1 = top of goal → map to 0.75..0.15 in screen coords
-  const endY = 0.75 - targetY * 0.55;
-
+  const endPoint = config.targetPoint ?? {
+    x: 0.5 + targetX * 0.38,
+    y: 0.75 - targetY * 0.55,
+  };
   const powerFactor = Math.max(0.4, power / 100);
 
+  const clampedEndPoint = clampGoalPoint(endPoint);
   for (let i = 0; i <= steps; i++) {
+    if (i === steps) {
+      points.push(clampedEndPoint);
+      continue;
+    }
     const t = i / steps;
-
-    // Horizontal: linear interpolation
-    const x = startX + (endX - startX) * t;
-
-    // Vertical: parabolic arc
-    const arcHeight = 0.25 * powerFactor * Math.sin(Math.PI * t);
-    const y = startY + (endY - startY) * t - arcHeight;
-
-    // Spin: lateral curve (peaks at midpoint)
+    const x = startX + (endPoint.x - startX) * t;
+    const arcHeight = 0.25 * powerFactor * arcBoost * Math.sin(Math.PI * t);
+    const y = startY + (endPoint.y - startY) * t - arcHeight;
     const spinOffset = spin * 0.08 * Math.sin(Math.PI * t);
-
-    // Wind: quadratic drift
     const windOffset = wind * 0.04 * t * t;
-
     points.push({
-      x: Math.max(0.02, Math.min(0.98, x + spinOffset + windOffset)),
-      y: Math.max(0.02, Math.min(0.98, y)),
+      x: clamp(x + spinOffset + windOffset, 0.02, 0.98),
+      y: clamp(y, 0.02, 0.98),
     });
   }
-
   return points;
 }
 
-// ── Goalkeeper Save Check ────────────────────────────────────
-/**
- * Returns true if the keeper saves the shot.
- * targetX: -1 to 1 (goal position, 0 = center)
- * keeperX: 0 to 1 (keeper position, 0.5 = center)
- */
-export function checkGoalkeeperSave(
-  targetX: number,
-  keeperX: number,  // 0-1 normalized
-  keeperSpeed: number,
-  power: number
-): boolean {
-  // Convert keeper position to -1..1 range
+/** Deterministic compatibility helper for the existing engine contract. */
+export function checkGoalkeeperSave(targetX: number, keeperX: number, keeperSpeed: number, power: number): boolean {
   const keeperPos = (keeperX - 0.5) * 2;
-
-  // Distance between target and keeper
   const dist = Math.abs(targetX - keeperPos);
-
-  // Keeper reach depends on speed
   const reach = 0.25 + keeperSpeed * 0.35;
-
-  // High power shots are harder to save
   const powerFactor = power / 100;
   const effectiveReach = reach * (1 - powerFactor * 0.3);
-
-  if (dist > effectiveReach) return false;
-
-  // Within reach: probability based on how close
-  const closeness = 1 - dist / effectiveReach;
-  const saveProb = closeness * 0.75;
-  return Math.random() < saveProb;
+  return dist <= effectiveReach;
 }
 
-// ── Wall Block Check ─────────────────────────────────────────
-export function checkWallBlock(
-  targetX: number,  // -1 to 1
-  targetY: number,  // 0 to 1
-  wall: WallPlayer[],
-  spin: number
-): boolean {
+/** Deterministic compatibility helper for the existing engine contract. */
+export function checkWallBlock(targetX: number, targetY: number, wall: WallPlayer[], spin: number): boolean {
   if (wall.length === 0) return false;
-
   for (const player of wall) {
-    // Wall players are positioned in 0-1 space, convert to -1..1
     const wallX = (player.position.x - 0.5) * 2;
     const dx = Math.abs(targetX - wallX);
-
-    // Wall only blocks low shots (targetY < 0.5)
     if (targetY > 0.6) continue;
-
-    // Spin helps curve around wall
     const spinHelp = Math.abs(spin) * 0.15;
     const blockRadius = 0.18 - spinHelp;
-
-    if (dx < blockRadius) {
-      return Math.random() > 0.25; // 75% block chance if in range
-    }
+    if (dx < blockRadius) return true;
   }
-
   return false;
 }
 
-// ── Main Shot Resolver ───────────────────────────────────────
+/** Builds the V9 keeper snapshot shared by UI capture and physics input creation. */
+export function createKeeperSnapshot(position: Vec2, keeperSpeed: number, hasKeeper = true): KeeperSnapshot {
+  return {
+    position: { ...position },
+    reach: hasKeeper ? Math.max(0, 0.25 + keeperSpeed * 0.35) : 0,
+  };
+}
+
+/** Corners are evaluated from the resolved landing point, never from a power bonus. */
+export function isCornerGoalPoint(point: Vec2): boolean {
+  const horizontalCorner = point.x <= 0.25 || point.x >= 0.75;
+  const verticalCorner = point.y <= 0.25 || point.y >= 0.75;
+  return horizontalCorner && verticalCorner;
+}
+
+function getKeeperReach(keeper: ShotInput["keeper"], power: number): number {
+  return keeper.reach * (1 - (power / 100) * 0.3);
+}
+
+function isSavedByKeeper(point: Vec2, keeper: ShotInput["keeper"], power: number): boolean {
+  const reach = getKeeperReach(keeper, power);
+  return Math.abs(point.x - keeper.position.x) <= reach && Math.abs(point.y - keeper.position.y) <= reach * 1.35;
+}
+
+function isInsideGoalWithMargin(point: Vec2, targetSizeMultiplier: number): boolean {
+  const margin = Math.max(0, targetSizeMultiplier - 1) * 0.5;
+  return point.x >= -margin && point.x <= 1 + margin && point.y >= -margin && point.y <= 1 + margin;
+}
+
+function isBlockedByWall(point: Vec2, wall: ShotInput["wall"], spin: number): boolean {
+  if (point.y < 0.5) return false;
+  const spinHelp = Math.abs(spin) * 0.15;
+  return wall.some((player) => {
+    const radius = Math.max(0.04, player.radius - spinHelp);
+    return Math.abs(point.x - player.position.x) <= radius && Math.abs(point.y - player.position.y) <= radius * 1.35;
+  });
+}
+
+function getReasonCode({
+  insideGoal,
+  mathCorrect,
+  targetPoint,
+  landingPoint,
+  savedByKeeper,
+  blockedByWall,
+  wind,
+}: {
+  insideGoal: boolean;
+  mathCorrect: boolean;
+  targetPoint: Vec2;
+  landingPoint: Vec2;
+  savedByKeeper: boolean;
+  blockedByWall: boolean;
+  wind: Vec2;
+}): ShotReasonCode {
+  if (!insideGoal) return "outside_goal";
+  if (savedByKeeper) return "keeper_reach";
+  if (blockedByWall) return "wall_block";
+  const drift = Math.hypot(landingPoint.x - targetPoint.x, landingPoint.y - targetPoint.y);
+  if (!mathCorrect && drift > 0.001) return "reduced_accuracy";
+  if (Math.hypot(wind.x, wind.y) > 0.001) return "wind_drift";
+  return "clean_target";
+}
+
+function getOutcome(scored: boolean, savedByKeeper: boolean, blockedByWall: boolean): ShotResolution["outcome"] {
+  if (scored) return "goal";
+  if (savedByKeeper) return "saved";
+  if (blockedByWall) return "blocked";
+  return "missed";
+}
+
+export function resolveShot(input: ShotInput): ShotResolution {
+  const random = seededRandom(input.seed);
+  const targetPoint = coordToGoalPoint(input.targetCoord, input.gridQuadrants);
+  const modifiers = getMathPowerModifiers(input.mathCorrect ? input.mathPower : null);
+  const runtime = input.runtimeModifiers;
+  const effectivePower = input.mathCorrect
+    ? Math.min(100, input.basePower + modifiers.powerBonus)
+    : input.basePower * 0.55;
+  const direction = input.targetCoord.x >= 0 ? 1 : -1;
+  const effectiveSpin = clamp(input.spin || modifiers.autoSpin * direction, -1, 1);
+  const accuracy = effectivePower / 100;
+  const noise = (1 - accuracy) * 0.15 * modifiers.accuracyNoiseMultiplier;
+  const precisionDrift = input.mathCorrect
+    ? { x: 0, y: 0 }
+    : { x: (random() - 0.5) * noise, y: (random() - 0.5) * noise };
+  const windMultiplier = runtime?.windMultiplier ?? 1;
+  const rawLandingPoint = {
+    x: targetPoint.x + precisionDrift.x + input.wind.x * windMultiplier,
+    y: targetPoint.y + precisionDrift.y + input.wind.y * windMultiplier,
+  };
+  const targetSizeMultiplier = runtime?.targetSizeMultiplier ?? 1;
+  const insideGoal = isInsideGoal(rawLandingPoint) || isInsideGoalWithMargin(rawLandingPoint, targetSizeMultiplier);
+  const landingPoint = clampGoalPoint(rawLandingPoint, 0.02);
+  const keeper = runtime?.keeperReachMultiplier
+    ? { ...input.keeper, reach: input.keeper.reach * runtime.keeperReachMultiplier }
+    : input.keeper;
+  const wallReachMultiplier = runtime?.wallReachMultiplier ?? 1;
+  const effectiveWall = wallReachMultiplier === 1
+    ? input.wall
+    : input.wall.map((player) => ({ ...player, radius: player.radius * wallReachMultiplier }));
+  const savedByKeeper = insideGoal && isSavedByKeeper(landingPoint, keeper, effectivePower);
+  const blockedByWall = insideGoal && !savedByKeeper && isBlockedByWall(landingPoint, effectiveWall, effectiveSpin);
+  const scored = insideGoal && !savedByKeeper && !blockedByWall;
+  const outcome = getOutcome(scored, savedByKeeper, blockedByWall);
+  const reasonCode = getReasonCode({
+    insideGoal,
+    mathCorrect: input.mathCorrect,
+    targetPoint,
+    landingPoint,
+    savedByKeeper,
+    blockedByWall,
+    wind: input.wind,
+  });
+  const appliedModifiers: AppliedModifier[] = [];
+  if (!input.mathCorrect) appliedModifiers.push({ id: "reduced-accuracy", amount: noise });
+  if (Math.hypot(input.wind.x, input.wind.y) > 0) {
+    appliedModifiers.push({ id: "wind", amount: Math.hypot(input.wind.x, input.wind.y) });
+  }
+  if (input.mathPower) appliedModifiers.push({ id: `math-power:${input.mathPower}`, amount: 1 });
+  if (runtime?.keeperReachMultiplier !== undefined && runtime.keeperReachMultiplier !== 1) {
+    appliedModifiers.push({ id: "flow:keeper-reach", amount: runtime.keeperReachMultiplier });
+  }
+  if (runtime?.wallReachMultiplier !== undefined && runtime.wallReachMultiplier !== 1) {
+    appliedModifiers.push({ id: "flow:wall-reach", amount: runtime.wallReachMultiplier });
+  }
+  if (runtime?.targetSizeMultiplier !== undefined && runtime.targetSizeMultiplier !== 1) {
+    appliedModifiers.push({ id: "flow:target-size", amount: runtime.targetSizeMultiplier });
+  }
+  if (runtime?.windMultiplier !== undefined && runtime.windMultiplier !== 1) {
+    appliedModifiers.push({ id: "flow:wind", amount: runtime.windMultiplier });
+  }
+
+  return {
+    scored,
+    targetCoord: input.targetCoord,
+    targetPoint,
+    landingPoint,
+    actualCoord: goalPointToCoord(landingPoint, input.gridQuadrants),
+    mathCorrect: input.mathCorrect,
+    powerUsed: effectivePower,
+    spinUsed: effectiveSpin,
+    savedByKeeper,
+    blockedByWall,
+    trajectoryPoints: calculateTrajectory({
+      power: effectivePower,
+      targetX: targetPoint.x,
+      targetY: targetPoint.y,
+      spin: effectiveSpin,
+      wind: 0,
+      arcBoost: modifiers.arcBoost,
+      targetPoint: landingPoint,
+    }),
+    bonusMultiplier: 1 + (input.mathCorrect ? 0.5 : 0) + modifiers.scoreBonus,
+    outcome,
+    reasonCode,
+    appliedModifiers,
+    input,
+  };
+}
+
+/**
+ * Compatibility adapter for the pre-V9 call site. It translates legacy
+ * normalized inputs into the explicit V9 ShotInput contract.
+ */
 export function resolveShotResult(
   targetCoord: Vec2,
   mathCorrect: boolean,
@@ -129,73 +294,30 @@ export function resolveShotResult(
   spin: number,
   keeper: GoalkeeperState,
   wall: WallPlayer[],
-  levelConfig: {
-    keeperSpeed: number;
-    wind: boolean;
-    windStrength: number;
-    gridMax?: Vec2;
-  }
-): ShotResult {
-  const gridMax = levelConfig.gridMax ?? { x: 3, y: 3 };
-
-  // Normalize target coord to -1..1 range
-  const normalizedX = targetCoord.x / gridMax.x;
-  const normalizedY = (targetCoord.y + gridMax.y) / (gridMax.y * 2); // 0..1
-
-  // Math affects power
-  const effectivePower = mathCorrect ? power : power * 0.55;
-
-  // Wind effect
-  const wind = levelConfig.wind
-    ? (Math.random() - 0.5) * levelConfig.windStrength * 2
-    : 0;
-
-  // Accuracy noise: less noise with higher power
-  const accuracy = effectivePower / 100;
-  const noise = (1 - accuracy) * 0.15; // reduced noise for better feel
-  const actualX = normalizedX + (Math.random() - 0.5) * noise;
-  const actualY = normalizedY + (Math.random() - 0.5) * noise;
-
-  // Check keeper save (using keeper's current animated position)
-  const savedByKeeper = levelConfig.keeperSpeed > 0
-    ? checkGoalkeeperSave(actualX, keeper.position.x, levelConfig.keeperSpeed, effectivePower)
-    : false;
-
-  // Check wall block
-  const blockedByWall = checkWallBlock(actualX, actualY, wall, spin);
-
-  // Shot is in goal if within bounds (-1..1 x, 0..1 y)
-  const inGoal = Math.abs(actualX) <= 1.0 && actualY >= 0 && actualY <= 1.0;
-  const scored = inGoal && !savedByKeeper && !blockedByWall;
-
-  // Generate trajectory
-  const trajectory = calculateTrajectory({
-    power: effectivePower,
-    targetX: normalizedX,
-    targetY: normalizedY,
-    spin,
-    wind,
-  });
-
-  // Bonus multiplier
-  let bonusMultiplier = 1;
-  if (mathCorrect) bonusMultiplier += 0.5;
-  if (scored && Math.abs(normalizedX) > 0.65) bonusMultiplier += 0.5; // corner
-  if (scored && normalizedY > 0.65) bonusMultiplier += 0.3; // top corner
-
-  return {
-    scored,
+  levelConfig: LegacyLevelConfig,
+  mathPower: MathPower = null,
+  seed = 1,
+  runtimeModifiers?: ShotInput["runtimeModifiers"],
+  keeperSnapshot?: KeeperSnapshot,
+): ShotResolution {
+  const gridQuadrants: 1 | 4 = levelConfig.gridQuadrants
+    ?? (targetCoord.x < 0 || targetCoord.y < 0 ? 4 : 1);
+  const wind = createWindSnapshot(levelConfig.wind, levelConfig.windStrength, seed);
+  return resolveShot({
     targetCoord,
-    actualCoord: {
-      x: Math.round(actualX * gridMax.x),
-      y: Math.round(actualY * gridMax.y * 2 - gridMax.y),
-    },
+    gridQuadrants,
     mathCorrect,
-    powerUsed: effectivePower,
-    spinUsed: spin,
-    savedByKeeper,
-    blockedByWall,
-    trajectoryPoints: trajectory,
-    bonusMultiplier,
-  };
+    basePower: power,
+    spin,
+    mathPower,
+    keeper: keeperSnapshot ?? createKeeperSnapshot(
+      keeper.position,
+      levelConfig.keeperSpeed,
+      levelConfig.hasKeeper !== false,
+    ),
+    wall: wall.map((player) => ({ position: player.position, radius: WALL_PLAYER_RADIUS })),
+    wind,
+    seed,
+    runtimeModifiers,
+  });
 }

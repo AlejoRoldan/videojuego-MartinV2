@@ -189,7 +189,7 @@ function GameButton({
     <motion.button
       whileTap={{ scale: 0.95 }}
       whileHover={{ scale: 1.02 }}
-      onPointerDown={onClick}
+      onClick={onClick}
       className="w-full py-4 rounded-2xl font-black text-lg"
       style={{
         fontFamily: "'Fredoka One', cursive",

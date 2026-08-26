@@ -207,3 +207,381 @@
 .animate-pulse-glow {
   animation: pulse-glow 2s ease-in-out infinite;
 }
+
+/* Microvictory feedback: short, readable rewards that never block the next shot. */
+@keyframes microvictory-pop {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.55); }
+  22% { opacity: 1; transform: translate(-50%, -50%) scale(1.08); }
+  62% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(0.92); }
+}
+
+@keyframes microvictory-halo {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.35); }
+  30% { opacity: 0.9; }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.75); }
+}
+
+@keyframes microvictory-spark {
+  0% { opacity: 0; transform: translate(-50%, -50%) rotate(var(--spark-angle)) translateY(0) scale(0.5); }
+  28% { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -50%) rotate(var(--spark-angle)) translateY(-54px) scale(0.9); }
+}
+
+@keyframes microvictory-perfect-aura {
+  0%, 100% { opacity: 0.45; transform: translate(-50%, -50%) scale(0.9); }
+  50% { opacity: 1; transform: translate(-50%, -50%) scale(1.12); }
+}
+
+.microvictory-burst {
+  position: absolute;
+  left: 50%;
+  top: 34%;
+  z-index: 62;
+  width: min(88%, 330px);
+  min-height: 132px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  pointer-events: none;
+  color: var(--burst-accent);
+  text-align: center;
+  filter: drop-shadow(0 4px 12px rgba(0,0,0,0.45));
+  animation: microvictory-pop 780ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+.microvictory-burst__halo {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 110px;
+  height: 110px;
+  border-radius: 50%;
+  border: 3px solid var(--burst-accent);
+  box-shadow: 0 0 22px var(--burst-glow), inset 0 0 18px var(--burst-glow);
+  transform: translate(-50%, -50%);
+  animation: microvictory-halo 720ms ease-out both;
+}
+
+.microvictory-burst__icon {
+  position: relative;
+  z-index: 2;
+  font-size: clamp(42px, 13vw, 64px);
+  line-height: 0.95;
+  text-shadow: 0 0 18px var(--burst-glow), 3px 3px 0 rgba(0,0,0,0.45);
+}
+
+.microvictory-burst__label {
+  position: relative;
+  z-index: 2;
+  padding: 5px 13px;
+  border: 2px solid var(--burst-accent);
+  border-radius: 999px;
+  background: rgba(8, 14, 26, 0.82);
+  color: white;
+  font-family: 'Fredoka One', cursive;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  box-shadow: 0 0 14px var(--burst-glow);
+}
+
+.microvictory-burst__spark {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 7px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--burst-accent);
+  box-shadow: 0 0 10px var(--burst-glow);
+  transform-origin: 50% 50%;
+  animation: microvictory-spark 680ms ease-out both;
+}
+
+.microvictory-burst__spark--1 { --spark-angle: 0deg; animation-delay: 15ms; }
+.microvictory-burst__spark--2 { --spark-angle: 45deg; animation-delay: 30ms; }
+.microvictory-burst__spark--3 { --spark-angle: 90deg; animation-delay: 45ms; }
+.microvictory-burst__spark--4 { --spark-angle: 135deg; animation-delay: 60ms; }
+.microvictory-burst__spark--5 { --spark-angle: 180deg; animation-delay: 75ms; }
+.microvictory-burst__spark--6 { --spark-angle: 225deg; animation-delay: 90ms; }
+.microvictory-burst__spark--7 { --spark-angle: 270deg; animation-delay: 105ms; }
+.microvictory-burst__spark--8 { --spark-angle: 315deg; animation-delay: 120ms; }
+
+.microvictory-burst--mission {
+  top: 29%;
+  min-height: 156px;
+}
+
+.microvictory-burst--mission .microvictory-burst__halo {
+  width: 138px;
+  height: 138px;
+}
+
+.microvictory-burst--perfect .microvictory-burst__halo {
+  animation: microvictory-perfect-aura 520ms ease-in-out 2 both;
+}
+
+.microvictory-burst--reduced,
+.microvictory-burst--reduced .microvictory-burst__halo,
+.microvictory-burst--reduced .microvictory-burst__spark {
+  animation: none;
+}
+
+.microvictory-burst--reduced {
+  opacity: 1;
+  transform: translate(-50%, -50%);
+}
+
+.microvictory-burst--reduced .microvictory-burst__halo {
+  opacity: 0.7;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+.microvictory-burst--reduced .microvictory-burst__spark {
+  opacity: 0.75;
+  transform: translate(-50%, -50%) rotate(var(--spark-angle)) translateY(-35px) scale(0.8);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Phase 9 stadium feedback: short non-blocking light and confetti accents. */
+@keyframes stadium-pulse {
+  0% { opacity: 0; transform: scale(0.45); }
+  24% { opacity: 0.8; }
+  100% { opacity: 0; transform: scale(1.3); }
+}
+
+@keyframes stadium-confetti {
+  0% { opacity: 0; transform: translateY(-14vh) rotate(0deg); }
+  14% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(68vh) rotate(440deg); }
+}
+
+.stadium-celebration {
+  position: absolute;
+  inset: 0;
+  z-index: 9;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.stadium-celebration__pulse {
+  position: absolute;
+  left: 50%;
+  top: 47%;
+  width: min(78vw, 430px);
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  animation: stadium-pulse 900ms ease-out both;
+}
+
+.stadium-celebration--goal .stadium-celebration__pulse,
+.stadium-celebration--match .stadium-celebration__pulse {
+  background: radial-gradient(circle, rgba(255,209,102,.5), rgba(114,242,161,.18) 44%, transparent 70%);
+}
+
+.stadium-celebration--unlock .stadium-celebration__pulse {
+  background: radial-gradient(circle, rgba(200,155,255,.5), rgba(104,199,255,.18) 44%, transparent 70%);
+}
+
+.stadium-celebration--save .stadium-celebration__pulse {
+  background: radial-gradient(circle, rgba(104,199,255,.46), transparent 68%);
+}
+
+.stadium-celebration__piece {
+  position: absolute;
+  top: 10%;
+  width: 7px;
+  height: 15px;
+  border-radius: 3px;
+  box-shadow: 0 0 8px currentColor;
+  animation: stadium-confetti 1.35s ease-in both;
+}
+
+/* Phase 12: a short, calm entrance before the first whistle. */
+@keyframes v12-welcome-rise {
+  from { opacity: 0; transform: translateY(16px) scale(.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.v12-welcome-card {
+  animation: v12-welcome-rise 420ms cubic-bezier(.2,.8,.2,1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stadium-celebration__piece {
+    display: none;
+  }
+
+  .stadium-celebration__pulse {
+    animation: none;
+    opacity: 0.24;
+  }
+
+  .v12-welcome-card {
+    animation: none;
+  }
+}
+
+/* Gameplay target zones: semantic hit areas without a visible grid. */
+.goal-target-zone:not(:disabled):hover {
+  background: rgba(125, 255, 214, 0.08) !important;
+  border-color: rgba(125, 255, 214, 0.42) !important;
+}
+
+.goal-target-zone:not(:disabled):focus-visible {
+  outline: 3px solid #7dffd6;
+  outline-offset: -5px;
+  box-shadow: 0 0 0 4px rgba(3, 18, 32, 0.72), 0 0 18px rgba(125, 255, 214, 0.32) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .goal-target-zone {
+    transition: none !important;
+  }
+}
+
+/* Shot feedback: a quick sports-broadcast flash and restrained camera impact. */
+@keyframes shot-flash {
+  0% { opacity: 0; transform: scale(0.92); }
+  18% { opacity: 0.95; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.04); }
+}
+
+@keyframes shot-microimpact {
+  0% { transform: translate3d(0, 0, 0); }
+  18% { transform: translate3d(2px, -1px, 0) scale(1.004); }
+  36% { transform: translate3d(-2px, 1px, 0) scale(1.002); }
+  54% { transform: translate3d(1px, 0, 0); }
+  72% { transform: translate3d(-1px, 0, 0); }
+  100% { transform: translate3d(0, 0, 0); }
+}
+
+.shot-flash {
+  position: absolute;
+  inset: 0;
+  z-index: 35;
+  pointer-events: none;
+  background: radial-gradient(
+    circle at 50% 76%,
+    rgba(255,255,255,0.95) 0%,
+    rgba(255,215,0,0.55) 16%,
+    rgba(255,107,53,0.2) 42%,
+    transparent 72%
+  );
+  mix-blend-mode: screen;
+  animation: shot-flash 180ms ease-out both;
+}
+
+.shot-microimpact {
+  animation: shot-microimpact 190ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shot-flash {
+    animation: none;
+    opacity: 0.2;
+  }
+
+  .shot-microimpact {
+    animation: none;
+  }
+}
+
+/* Direct shot feedback: a soft sports-broadcast trail, not a technical line. */
+.shot-trajectory-blur {
+  position: absolute;
+  inset: 0;
+  z-index: 23;
+  pointer-events: none;
+  overflow: visible;
+  filter: blur(0.2px);
+}
+
+.shot-trajectory-blur span {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,255,255,0.98) 0%, rgba(255,210,117,0.78) 38%, rgba(255,107,53,0.22) 68%, transparent 100%);
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.35);
+  filter: blur(1.2px);
+  box-shadow: 0 0 8px rgba(255, 214, 128, 0.52);
+  animation: shot-trail-pulse 260ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+@keyframes shot-trail-pulse {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.28);
+  }
+  24% {
+    opacity: 0.88;
+    transform: translate(-50%, -50%) scale(0.78);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.28);
+  }
+}
+
+.shot-destination-marker {
+  position: absolute;
+  z-index: 24;
+  width: 42px;
+  height: 42px;
+  border: 2px solid rgba(255, 215, 0, 0.88);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle, rgba(255,215,0,0.22) 0%, rgba(255,107,53,0.08) 42%, transparent 72%);
+  box-shadow: 0 0 0 5px rgba(255,107,53,0.12), 0 0 18px rgba(255,215,0,0.72);
+  animation: shot-destination-pulse 320ms ease-out both;
+  pointer-events: none;
+}
+
+.shot-destination-marker::before,
+.shot-destination-marker::after,
+.shot-destination-marker span {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  background: rgba(255, 244, 194, 0.96);
+  transform: translate(-50%, -50%);
+}
+
+.shot-destination-marker::before { width: 2px; height: 56px; }
+.shot-destination-marker::after { width: 56px; height: 2px; }
+.shot-destination-marker span { width: 7px; height: 7px; border-radius: 50%; }
+
+@keyframes shot-destination-pulse {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.55); }
+  45% { opacity: 1; transform: translate(-50%, -50%) scale(1.06); }
+  100% { opacity: 0.84; transform: translate(-50%, -50%) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shot-trajectory-blur span {
+    animation: none;
+    opacity: 0.42;
+    transform: translate(-50%, -50%) scale(0.62);
+    filter: blur(1px);
+  }
+
+  .shot-destination-marker {
+    animation: none;
+    opacity: 0.86;
+  }
+}
