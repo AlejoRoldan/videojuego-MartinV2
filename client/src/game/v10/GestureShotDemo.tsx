@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { features } from "@/config/features";
 import { sounds } from "../engine/soundSystem";
 import StadiumCanvas from "./StadiumCanvas";
 import {
@@ -275,9 +276,10 @@ export default function GestureShotDemo() {
     setSoundEnabled(loadedSoundPreference);
     const incomingInvitation = readLightningInvitation(window.location.search);
     setInvitation(incomingInvitation);
-    const incomingRoomCode = readLiveRoomInvitation(window.location.search);
+    const incomingRoomCode = features.remoteRooms ? readLiveRoomInvitation(window.location.search) : "";
     setLiveRoomCode(incomingRoomCode);
-    const storedLiveSession = loadLiveRoomSession(storage);
+    const storedLiveSession = features.remoteRooms ? loadLiveRoomSession(storage) : null;
+    if (!features.remoteRooms) clearLiveRoomSession(storage);
     if (storedLiveSession) {
       setInvitation(null);
       setLiveSession(storedLiveSession);
@@ -307,22 +309,54 @@ export default function GestureShotDemo() {
   useEffect(() => {
     if (!liveSession) return;
     let cancelled = false;
+    let delayMs = 2_000;
+    let timeoutId: number | null = null;
+    let controller: AbortController | null = null;
+    let inFlight = false;
+
+    const schedule = (delay: number) => {
+      if (!cancelled) timeoutId = window.setTimeout(synchronize, delay);
+    };
     const synchronize = async () => {
+      if (cancelled || inFlight) return;
+      if (document.visibilityState === "hidden") {
+        schedule(8_000);
+        return;
+      }
+      controller = new AbortController();
+      inFlight = true;
       try {
-        const room = await fetchRemoteLiveRoom(liveSession);
+        const room = await fetchRemoteLiveRoom(liveSession, controller.signal);
         if (!cancelled) {
           setLiveRoom(room);
           setLiveError("");
+          delayMs = 2_000;
         }
       } catch (error) {
-        if (!cancelled) setLiveError(error instanceof Error ? error.message : "No pudimos actualizar la sala.");
+        if (!cancelled && !(error instanceof DOMException && error.name === "AbortError")) {
+          setLiveError(error instanceof Error ? error.message : "No pudimos actualizar la sala.");
+          delayMs = Math.min(16_000, delayMs * 2);
+        }
+      } finally {
+        inFlight = false;
+        schedule(delayMs);
       }
     };
+    const resume = () => {
+      if (cancelled || inFlight || document.visibilityState === "hidden") return;
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+      schedule(0);
+    };
+
     void synchronize();
-    const interval = window.setInterval(synchronize, 2_000);
+    document.addEventListener("visibilitychange", resume);
+    window.addEventListener("online", resume);
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
+      controller?.abort();
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+      document.removeEventListener("visibilitychange", resume);
+      window.removeEventListener("online", resume);
     };
   }, [liveSession]);
 
@@ -1241,7 +1275,7 @@ export default function GestureShotDemo() {
                 <button type="button" onClick={startSoloExperience} style={{ width: "100%", minHeight: 51, marginTop: 12, borderRadius: 15, border: "2px solid rgba(255,255,255,.38)", background: "linear-gradient(180deg, #35c76e, #168746)", color: "white", fontSize: 14, fontWeight: 950, boxShadow: "0 8px 24px rgba(22,135,70,.3)" }}>⚽ JUGAR · {currentStage.name.toUpperCase()}</button>
               )}
               <button type="button" onClick={openSocialExperience} style={{ width: "100%", minHeight: 44, marginTop: 8, borderRadius: 13, border: "1px solid rgba(104,199,255,.5)", background: "rgba(104,199,255,.12)", color: "#bfe7ff", fontSize: 12, fontWeight: 950 }}>⚡ COMPETIR CON AMIGOS</button>
-              <p style={{ margin: "8px 2px 0", color: "#9fb3aa", fontSize: 9, lineHeight: 1.35, textAlign: "center" }}>Copa local · sala en vivo · reto por enlace<br />Sin chat, cuentas, anuncios ni ubicación.</p>
+              <p style={{ margin: "8px 2px 0", color: "#9fb3aa", fontSize: 9, lineHeight: 1.35, textAlign: "center" }}>Copa local · {features.remoteRooms ? "sala en vivo · " : ""}reto por enlace<br />Sin chat, cuentas, anuncios ni ubicación.</p>
             </div>
           </section>
         )}
@@ -1318,19 +1352,25 @@ export default function GestureShotDemo() {
                 </div>
               ) : (
                 <div style={{ marginTop: 15 }}>
-                  <div style={{ padding: 13, borderRadius: 17, background: "rgba(104,199,255,.09)", border: "1px solid rgba(104,199,255,.38)" }}>
-                    <span style={{ display: "block", color: "#72f2a1", fontSize: 10, fontWeight: 950, letterSpacing: 1.1 }}>SALA EN VIVO · CADA UNO DESDE SU DISPOSITIVO</span>
-                    <label style={{ display: "grid", gap: 5, marginTop: 10, color: "#dce8e2", fontSize: 10, fontWeight: 900 }}>
-                      Tu nombre o apodo
-                      <input value={playerNames[0] ?? ""} onChange={(event) => updatePlayerName(0, event.target.value)} maxLength={14} autoComplete="off" style={{ minHeight: 42, borderRadius: 11, border: "1px solid rgba(255,255,255,.28)", background: "rgba(255,255,255,.08)", color: "white", padding: "0 11px", fontSize: 14, fontWeight: 900, outline: "none" }} />
-                    </label>
-                    <button type="button" onClick={createLiveRoom} disabled={liveBusy} style={{ width: "100%", minHeight: 47, marginTop: 10, borderRadius: 14, border: "2px solid rgba(255,255,255,.36)", background: "linear-gradient(180deg, #32bd68, #168746)", color: "white", fontSize: 14, fontWeight: 950 }}>{liveBusy ? "CONECTANDO…" : "CREAR SALA EN VIVO"}</button>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 7, marginTop: 9 }}>
-                      <input aria-label="Código de la sala" value={liveRoomCode} onChange={(event) => setLiveRoomCode(sanitizeLiveRoomCode(event.target.value))} onKeyDown={(event) => { if (event.key === "Enter") void joinLiveRoom(); }} maxLength={6} autoComplete="off" inputMode="text" placeholder="CÓDIGO" style={{ minWidth: 0, minHeight: 43, borderRadius: 11, border: "1px solid rgba(104,199,255,.55)", background: "rgba(0,0,0,.22)", color: "white", padding: "0 11px", fontSize: 16, fontWeight: 950, letterSpacing: 2, textTransform: "uppercase", outline: "none" }} />
-                      <button type="button" onClick={joinLiveRoom} disabled={liveBusy || liveRoomCode.length !== 6} style={{ minWidth: 91, minHeight: 43, borderRadius: 11, border: "1px solid rgba(104,199,255,.55)", background: liveRoomCode.length === 6 ? "rgba(104,199,255,.22)" : "rgba(255,255,255,.08)", color: liveRoomCode.length === 6 ? "#dff4ff" : "#879891", fontSize: 12, fontWeight: 950 }}>ENTRAR</button>
+                  {features.remoteRooms ? (
+                    <div style={{ padding: 13, borderRadius: 17, background: "rgba(104,199,255,.09)", border: "1px solid rgba(104,199,255,.38)" }}>
+                      <span style={{ display: "block", color: "#72f2a1", fontSize: 10, fontWeight: 950, letterSpacing: 1.1 }}>SALA EN VIVO · CADA UNO DESDE SU DISPOSITIVO</span>
+                      <label style={{ display: "grid", gap: 5, marginTop: 10, color: "#dce8e2", fontSize: 10, fontWeight: 900 }}>
+                        Tu nombre o apodo
+                        <input value={playerNames[0] ?? ""} onChange={(event) => updatePlayerName(0, event.target.value)} maxLength={14} autoComplete="off" style={{ minHeight: 42, borderRadius: 11, border: "1px solid rgba(255,255,255,.28)", background: "rgba(255,255,255,.08)", color: "white", padding: "0 11px", fontSize: 14, fontWeight: 900, outline: "none" }} />
+                      </label>
+                      <button type="button" onClick={createLiveRoom} disabled={liveBusy} style={{ width: "100%", minHeight: 47, marginTop: 10, borderRadius: 14, border: "2px solid rgba(255,255,255,.36)", background: "linear-gradient(180deg, #32bd68, #168746)", color: "white", fontSize: 14, fontWeight: 950 }}>{liveBusy ? "CONECTANDO…" : "CREAR SALA EN VIVO"}</button>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 7, marginTop: 9 }}>
+                        <input aria-label="Código de la sala" value={liveRoomCode} onChange={(event) => setLiveRoomCode(sanitizeLiveRoomCode(event.target.value))} onKeyDown={(event) => { if (event.key === "Enter") void joinLiveRoom(); }} maxLength={6} autoComplete="off" inputMode="text" placeholder="CÓDIGO" style={{ minWidth: 0, minHeight: 43, borderRadius: 11, border: "1px solid rgba(104,199,255,.55)", background: "rgba(0,0,0,.22)", color: "white", padding: "0 11px", fontSize: 16, fontWeight: 950, letterSpacing: 2, textTransform: "uppercase", outline: "none" }} />
+                        <button type="button" onClick={joinLiveRoom} disabled={liveBusy || liveRoomCode.length !== 6} style={{ minWidth: 91, minHeight: 43, borderRadius: 11, border: "1px solid rgba(104,199,255,.55)", background: liveRoomCode.length === 6 ? "rgba(104,199,255,.22)" : "rgba(255,255,255,.08)", color: liveRoomCode.length === 6 ? "#dff4ff" : "#879891", fontSize: 12, fontWeight: 950 }}>ENTRAR</button>
+                      </div>
+                      {liveError && <p role="alert" style={{ margin: "9px 0 0", color: "#ffc1c1", fontSize: 10, fontWeight: 900 }}>⚠ {liveError}</p>}
                     </div>
-                    {liveError && <p role="alert" style={{ margin: "9px 0 0", color: "#ffc1c1", fontSize: 10, fontWeight: 900 }}>⚠ {liveError}</p>}
-                  </div>
+                  ) : (
+                    <div style={{ padding: 13, borderRadius: 17, background: "rgba(104,199,255,.08)", border: "1px solid rgba(104,199,255,.28)", color: "#bfe7ff", textAlign: "center", fontSize: 11, fontWeight: 900 }}>
+                      Salas desde varios dispositivos: próximamente.
+                    </div>
+                  )}
                   <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: 8, margin: "14px 0 12px", color: "#91a69c", fontSize: 9, fontWeight: 900 }}><span style={{ height: 1, background: "rgba(255,255,255,.15)" }} /><span>O JUEGUEN EN UN SOLO DISPOSITIVO</span><span style={{ height: 1, background: "rgba(255,255,255,.15)" }} /></div>
                   <p style={{ margin: "0 0 12px", color: "#d4e3dc", fontSize: 12, lineHeight: 1.45 }}>Todos reciben la misma multiplicación en cada ronda. Ganan los goles, la precisión matemática y un pequeño bono por agilidad.</p>
                   <div role="group" aria-label="Cantidad de jugadores" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 7 }}>

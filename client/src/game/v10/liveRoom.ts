@@ -4,47 +4,22 @@ import {
   recordLightningShot,
 } from "./lightningCup";
 import type { MultiplicationChallengeV10, MultiplicationTrack } from "./multiplicationRound";
+import type {
+  LiveRoomPlayer,
+  LiveRoomSession,
+  LiveRoomSessionResponse,
+  LiveRoomSnapshot,
+} from "@shared/liveRoomContract";
+
+export type { LiveRoomPlayer, LiveRoomSession, LiveRoomSnapshot } from "@shared/liveRoomContract";
 
 export const V11_LIVE_ROOM_SESSION_KEY = "tlm_v11_live_room_session_v1";
 export const LIVE_ROOM_PLAYER_COLORS = ["#72f2a1", "#ffd166", "#68c7ff", "#c89bff"] as const;
-
-export interface LiveRoomSession {
-  roomCode: string;
-  playerId: string;
-  token: string;
-}
-
-export interface LiveRoomPlayer {
-  id: string;
-  nickname: string;
-  colorIndex: number;
-  shotsCompleted: number;
-  goals: number;
-  firstTryCorrect: number;
-  responseTimeMs: number;
-  score: number;
-}
-
-export interface LiveRoomSnapshot {
-  code: string;
-  seed: string;
-  track: MultiplicationTrack;
-  status: "waiting" | "playing" | "completed";
-  hostPlayerId: string;
-  shotsPerPlayer: number;
-  expiresAt: number;
-  players: LiveRoomPlayer[];
-}
 
 export interface LiveRoomStorage {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
   removeItem(key: string): void;
-}
-
-interface SessionResponse {
-  session: LiveRoomSession;
-  room: LiveRoomSnapshot;
 }
 
 export class LiveRoomRequestError extends Error {
@@ -122,7 +97,13 @@ export function clearLiveRoomSession(storage: LiveRoomStorage | null): boolean {
 }
 
 async function requestJson<T>(url: string, init: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
+  let response: Response;
+  try {
+    response = await fetch(url, init);
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    throw new LiveRoomRequestError("network_error", "No pudimos conectarnos con la sala.");
+  }
   const body = await response.json().catch(() => ({})) as { error?: string; code?: string } & T;
   if (!response.ok) throw new LiveRoomRequestError(body.code ?? "request_failed", body.error ?? "No pudimos actualizar la sala.");
   return body;
@@ -136,28 +117,32 @@ function sessionHeaders(session: LiveRoomSession): HeadersInit {
   };
 }
 
-export async function createRemoteLiveRoom(nickname: string, track: MultiplicationTrack): Promise<SessionResponse> {
-  return requestJson<SessionResponse>("/api/v11/rooms", {
+export async function createRemoteLiveRoom(nickname: string, track: MultiplicationTrack): Promise<LiveRoomSessionResponse> {
+  return requestJson<LiveRoomSessionResponse>("/api/v11/rooms", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ nickname, track }),
   });
 }
 
-export async function joinRemoteLiveRoom(code: string, nickname: string): Promise<SessionResponse> {
+export async function joinRemoteLiveRoom(code: string, nickname: string): Promise<LiveRoomSessionResponse> {
   const roomCode = sanitizeLiveRoomCode(code);
-  return requestJson<SessionResponse>(`/api/v11/rooms/${roomCode}`, {
+  return requestJson<LiveRoomSessionResponse>(`/api/v11/rooms/${roomCode}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "join", nickname }),
   });
 }
 
-export async function fetchRemoteLiveRoom(session: LiveRoomSession): Promise<LiveRoomSnapshot> {
+export async function fetchRemoteLiveRoom(
+  session: LiveRoomSession,
+  signal?: AbortSignal,
+): Promise<LiveRoomSnapshot> {
   return requestJson<LiveRoomSnapshot>(`/api/v11/rooms/${session.roomCode}`, {
     method: "GET",
     headers: sessionHeaders(session),
     cache: "no-store",
+    signal,
   });
 }
 

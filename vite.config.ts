@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { defineConfig, type Plugin, type ViteDevServer } from "vite";
 import { vitePluginManusRuntime } from "vite-plugin-manus-runtime";
+import { liveRoomsApiPlugin } from "./server/vitePluginLiveRooms";
 
 // =============================================================================
 // Manus Debug Collector - Vite Plugin
@@ -49,6 +50,18 @@ function trimLogFile(logPath: string, maxSize: number) {
   }
 }
 
+function redactSensitiveValues(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactSensitiveValues);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => {
+    const normalized = key.toLowerCase();
+    if (normalized === "authorization" || normalized === "x-player-id" || normalized.includes("token")) {
+      return [key, "[REDACTED]"];
+    }
+    return [key, redactSensitiveValues(entry)];
+  }));
+}
+
 function writeToLogFile(source: LogSource, entries: unknown[]) {
   if (entries.length === 0) return;
 
@@ -58,7 +71,7 @@ function writeToLogFile(source: LogSource, entries: unknown[]) {
   // Format entries with timestamps
   const lines = entries.map((entry) => {
     const ts = new Date().toISOString();
-    return `[${ts}] ${JSON.stringify(entry)}`;
+    return `[${ts}] ${JSON.stringify(redactSensitiveValues(entry))}`;
   });
 
   // Append to log file
@@ -203,7 +216,7 @@ function vitePluginStorageProxy(): Plugin {
   };
 }
 
-const plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector(), vitePluginStorageProxy()];
+const plugins = [liveRoomsApiPlugin(), react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector(), vitePluginStorageProxy()];
 
 export default defineConfig({
   plugins,

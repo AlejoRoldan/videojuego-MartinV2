@@ -7,10 +7,13 @@ export default defineConfig({
     jsxImportSource: "react",
   },
   resolve: {
-    alias: { "@": path.resolve(import.meta.dirname, "client/src") },
+    alias: {
+      "@": path.resolve(import.meta.dirname, "client/src"),
+      "@shared": path.resolve(import.meta.dirname, "shared"),
+    },
   },
   test: {
-    include: ["client/src/game/**/*.test.{ts,tsx}"],
+    include: ["client/src/game/**/*.test.{ts,tsx}", "server/**/*.test.ts"],
     environment: "node",
   },
 });
