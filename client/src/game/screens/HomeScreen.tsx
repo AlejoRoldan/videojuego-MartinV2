@@ -14,7 +14,7 @@ import {
   type GamePace,
 } from "../engine/gamePace";
 
-const HOME_BG = "/math-stadium-hero.png";
+const HOME_BG = "/math-stadium-teen.webp";
 const GAME_PACES: GamePace[] = ["easy", "medium", "match", "hard"];
 
 export default function HomeScreen() {
@@ -38,8 +38,11 @@ export default function HomeScreen() {
       style={{ minHeight: "100dvh" }}
     >
       <div
-        className="absolute inset-0 bg-cover bg-center"
-        style={{ backgroundImage: `url(${HOME_BG})` }}
+        className="absolute inset-0 bg-cover"
+        style={{
+          backgroundImage: `url(${HOME_BG})`,
+          backgroundPosition: "78% center",
+        }}
       />
       <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/60" />
 
