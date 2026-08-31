@@ -144,6 +144,10 @@ try {
   const reload = async () => {
     await cdp.send("Page.reload");
     await waitFor(async () => (await evaluate("document.readyState")) === "complete", "Reload did not finish");
+    await waitFor(
+      async () => (await evaluate("document.body.innerText")).includes("JUGAR"),
+      "Lazy home screen did not restore after reload",
+    );
   };
   const clickButtonContaining = async (text) => {
     const normalizedText = text.replace(/\s+/g, " ").trim();
