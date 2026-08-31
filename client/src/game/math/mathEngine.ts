@@ -4,6 +4,8 @@
 // =============================================================
 
 import type { MathChallenge, LevelConfig, Vec2 } from "../engine/types";
+import { getConfiguredTimeLimit } from "../engine/gamePace";
+import { coordToGoalPoint, goalPointToCoord } from "../engine/coordinates";
 
 function randomInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -18,48 +20,48 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-function generateOptions(answer: number, count = 4): number[] {
+function generateOptions(answer: number, count = 4, minimum = 0): number[] {
   const opts = new Set<number>([answer]);
   const deltas = [1, 2, 3, 5, 7, 10, -1, -2, -3, -5];
   let attempts = 0;
-  while (opts.size < count && attempts < 50) {
+  while (opts.size < count && attempts < 80) {
     const delta = deltas[Math.floor(Math.random() * deltas.length)];
     const candidate = answer + delta;
-    if (candidate > 0) opts.add(candidate);
+    if (candidate >= minimum) opts.add(candidate);
     attempts++;
   }
-  // fill if needed
+  let offset = 1;
   while (opts.size < count) {
-    opts.add(answer + opts.size * 3);
+    const candidate = answer + offset * (answer < minimum ? 1 : 3);
+    if (candidate >= minimum) opts.add(candidate);
+    offset++;
   }
   return shuffle(Array.from(opts)).slice(0, count);
 }
 
-// ── Multiplication Challenges ────────────────────────────────
-function multiplicationChallenge(difficulty: "easy" | "medium" | "hard"): MathChallenge {
-  let a: number, b: number;
-  if (difficulty === "easy") {
-    a = randomInt(2, 5);
-    b = randomInt(2, 5);
-  } else if (difficulty === "medium") {
-    a = randomInt(2, 7);
-    b = randomInt(2, 7);
-  } else {
-    a = randomInt(6, 9);
-    b = randomInt(6, 9);
-  }
+function multiplicationChallenge(
+  difficulty: "easy" | "medium" | "hard",
+  tableRange?: { min: number; max: number },
+): MathChallenge {
+  const fallbackRange = difficulty === "easy"
+    ? { min: 2, max: 5 }
+    : difficulty === "medium"
+    ? { min: 2, max: 7 }
+    : { min: 6, max: 9 };
+  const range = tableRange ?? fallbackRange;
+  const a = randomInt(range.min, range.max);
+  const b = randomInt(range.min, range.max);
   const answer = a * b;
   return {
     type: "multiplication",
     question: `${a} × ${b} = ?`,
     answer,
-    options: generateOptions(answer),
+    options: generateOptions(answer, 4, 0),
     timeLimit: difficulty === "easy" ? 15 : difficulty === "medium" ? 10 : 8,
     hint: `${a} grupos de ${b}`,
   };
 }
 
-// ── Coordinate Challenges ────────────────────────────────────
 function coordinateChallenge(
   difficulty: "easy" | "medium" | "hard",
   quadrants: 1 | 4
@@ -71,8 +73,7 @@ function coordinateChallenge(
   } else {
     x = randomInt(-3, 3);
     y = randomInt(-3, 3);
-    if (x === 0) x = 1;
-    if (y === 0) y = 1;
+    // Zero is a valid axis coordinate; only the quadrant question excludes it below.
   }
 
   const templates = [
@@ -84,27 +85,27 @@ function coordinateChallenge(
     {
       q: `Si el balón va a (${x}, ${y}), ¿cuál es su coordenada X?`,
       a: x,
-      opts: generateOptions(x),
+        opts: generateOptions(x, 4, -3),
     },
     {
       q: `Si el balón va a (${x}, ${y}), ¿cuál es su coordenada Y?`,
       a: y,
-      opts: generateOptions(y),
+        opts: generateOptions(y, 4, -3),
     },
   ];
 
-  const t = templates[randomInt(0, templates.length - 1)];
+  const validTemplates = x === 0 || y === 0 ? templates.slice(1) : templates;
+  const t = validTemplates[randomInt(0, validTemplates.length - 1)];
   return {
     type: "coordinate",
     question: t.q,
     answer: t.a,
     options: t.opts,
     timeLimit: difficulty === "easy" ? 15 : 10,
-    hint: `Recuerda: (X va horizontal, Y va vertical)`,
+    hint: "Recuerda: X va horizontal y Y va vertical",
   };
 }
 
-// ── Angle Challenges ─────────────────────────────────────────
 function angleChallenge(difficulty: "easy" | "medium" | "hard"): MathChallenge {
   const angles = difficulty === "easy"
     ? [0, 30, 45, 60, 90]
@@ -133,24 +134,23 @@ function angleChallenge(difficulty: "easy" | "medium" | "hard"): MathChallenge {
     answer: t.a,
     options: t.opts,
     timeLimit: difficulty === "easy" ? 15 : 10,
-    hint: `Un ángulo recto tiene 90°`,
+    hint: "Un ángulo recto tiene 90°",
   };
 }
 
-// ── Velocity Challenges ──────────────────────────────────────
 function velocityChallenge(difficulty: "easy" | "medium" | "hard"): MathChallenge {
-  const speed = randomInt(5, 20) * 5;
+  const speed = randomInt(2, 10);
   const time = randomInt(2, 5);
   const distance = speed * time;
 
   const questions = [
     {
-      q: `El balón va a ${speed} km/h durante ${time} segundos. ¿Cuántos metros recorre? (1 seg = 1 metro aquí)`,
+      q: `El balón va a ${speed} m/s durante ${time} segundos. ¿Cuántos metros recorre?`,
       a: distance,
       opts: generateOptions(distance),
     },
     {
-      q: `Si el balón recorre ${distance} metros en ${time} segundos, ¿a qué velocidad va?`,
+      q: `Si el balón recorre ${distance} metros en ${time} segundos, ¿a qué velocidad va en m/s?`,
       a: speed,
       opts: generateOptions(speed),
     },
@@ -163,52 +163,56 @@ function velocityChallenge(difficulty: "easy" | "medium" | "hard"): MathChalleng
     answer: t.a,
     options: t.opts,
     timeLimit: difficulty === "hard" ? 8 : 12,
-    hint: `Velocidad × Tiempo = Distancia`,
+    hint: "Velocidad × Tiempo = Distancia",
   };
 }
 
-// ── Main Generator ───────────────────────────────────────────
-export function generateChallenge(level: LevelConfig): MathChallenge {
+export function generateChallenge(level: LevelConfig, challengeIndex = 0): MathChallenge {
   const { concept, mathDifficulty, gridQuadrants } = level;
+  const configuredType = level.challengeTypes?.length
+    ? level.challengeTypes[challengeIndex % level.challengeTypes.length]
+    : undefined;
+  const challengeType = configuredType ?? (
+    concept === "multiplication" || concept === "tactics" ? "multiplication"
+      : concept === "coordinates" || concept === "cartesian" || concept === "directions" ? "coordinate"
+      : concept === "angles" || concept === "trajectories" ? "angle"
+      : "velocity"
+  );
+  let challenge: MathChallenge;
 
-  switch (concept) {
+  switch (challengeType) {
     case "multiplication":
-    case "tactics":
-      return multiplicationChallenge(mathDifficulty);
-
-    case "coordinates":
-    case "cartesian":
-      return coordinateChallenge(mathDifficulty, gridQuadrants);
-
-    case "angles":
-      return angleChallenge(mathDifficulty);
-
+      challenge = multiplicationChallenge(mathDifficulty, level.tableRange);
+      break;
+    case "coordinate":
+      challenge = concept === "directions"
+        ? {
+            type: "coordinate",
+            question: "¿A qué lado de la portería quieres apuntar?",
+            answer: 1,
+            options: [1, 2, 3, 4],
+            timeLimit: 20,
+            hint: "Haz clic en la portería donde quieres que entre el balón",
+          }
+        : coordinateChallenge(mathDifficulty, gridQuadrants);
+      break;
+    case "angle":
+      challenge = angleChallenge(mathDifficulty);
+      break;
     case "velocity":
-      return velocityChallenge(mathDifficulty);
-
-    case "directions":
-      // Very simple: just pick a direction
-      return {
-        type: "coordinate",
-        question: "¿A qué lado de la portería quieres apuntar?",
-        answer: 1,
-        options: [1, 2, 3, 4],
-        timeLimit: 20,
-        hint: "Haz clic en la portería donde quieres que entre el balón",
-      };
-
-    case "trajectories":
-      // Mix of multiplication and angles
-      return Math.random() > 0.5
-        ? multiplicationChallenge(mathDifficulty)
-        : angleChallenge(mathDifficulty);
-
+      challenge = velocityChallenge(mathDifficulty);
+      break;
     default:
-      return multiplicationChallenge(mathDifficulty);
+      challenge = multiplicationChallenge(mathDifficulty, level.tableRange);
+      break;
   }
+
+  return {
+    ...challenge,
+    timeLimit: getConfiguredTimeLimit(challenge.timeLimit),
+  };
 }
 
-// ── Power Calculator ─────────────────────────────────────────
 export function calculatePowerFromMath(
   answer: number,
   correctAnswer: number,
@@ -218,19 +222,19 @@ export function calculatePowerFromMath(
   const mathCorrect = answer === correctAnswer;
   const timeBonus = Math.max(0, 1 - timeTaken / timeLimit);
 
-  if (!mathCorrect) return 40 + Math.random() * 20; // 40-60% power on wrong answer
-  return 70 + timeBonus * 30; // 70-100% power on correct answer
+  if (!mathCorrect) return 40 + Math.random() * 20;
+  return 70 + timeBonus * 30;
 }
 
-// ── Adaptive Difficulty ──────────────────────────────────────
 export function updateAdaptiveDifficulty(
   currentMultiplier: number,
   recentErrors: number[],
   avgResponseTime: number,
   timeLimit: number
 ): { multiplier: number; hintsEnabled: boolean; targetSizeMultiplier: number } {
-  const recentErrorRate =
-    recentErrors.slice(-5).filter(Boolean).length / Math.min(5, recentErrors.length);
+  const recentErrorRate = recentErrors.length === 0
+    ? 0
+    : recentErrors.slice(-5).filter(Boolean).length / Math.min(5, recentErrors.length);
   const isStruggling = recentErrorRate > 0.6 || avgResponseTime > timeLimit * 0.9;
   const isExcelling = recentErrorRate < 0.2 && avgResponseTime < timeLimit * 0.5;
 
@@ -245,18 +249,10 @@ export function updateAdaptiveDifficulty(
   };
 }
 
-// ── Coordinate to Goal Position ──────────────────────────────
-export function coordToGoalPosition(coord: Vec2, gridMax: Vec2): Vec2 {
-  // Normalize coord to 0-1 range within goal
-  return {
-    x: (coord.x + gridMax.x) / (gridMax.x * 2),
-    y: (coord.y + gridMax.y) / (gridMax.y * 2),
-  };
+export function coordToGoalPosition(coord: Vec2, _gridMax: Vec2): Vec2 {
+  return coordToGoalPoint(coord, 4);
 }
 
-export function goalPositionToCoord(pos: Vec2, gridMax: Vec2): Vec2 {
-  return {
-    x: Math.round(pos.x * gridMax.x * 2 - gridMax.x),
-    y: Math.round(pos.y * gridMax.y * 2 - gridMax.y),
-  };
+export function goalPositionToCoord(pos: Vec2, _gridMax: Vec2): Vec2 {
+  return goalPointToCoord(pos, 4);
 }

@@ -9,6 +9,13 @@
     "start": "NODE_ENV=production node dist/index.js",
     "preview": "vite preview --host",
     "check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "node scripts/run-coverage.mjs",
+    "test:e2e": "node scripts/e2e-smoke.mjs",
+    "test:e2e:functional": "node scripts/e2e-functional.mjs",
+    "qa": "pnpm check && pnpm test:coverage",
+    "qa:full": "pnpm qa && pnpm build && pnpm test:e2e && pnpm test:e2e:functional",
     "format": "prettier --write ."
   },
   "dependencies": {
