@@ -178,7 +178,10 @@ try {
   await cdp.send("Page.navigate", { url: APP_URL });
   await waitFor(async () => (await evaluate("document.readyState")) === "complete", "Game did not load");
 
-  const homeText = await evaluate("document.body.innerText");
+  const homeText = await waitFor(async () => {
+    const text = await evaluate("document.body.innerText");
+    return text.includes("TIRO LIBRE") && text.includes("JUGAR") ? text : false;
+  }, "Home screen did not finish loading");
   assert(homeText.includes("TIRO LIBRE") && homeText.includes("JUGAR"), "Home screen is not playable.");
   assert(["Apunta", "Resuelve", "Dispara"].every((step) => homeText.includes(step)), "Home does not explain the three-step game loop.");
   await captureScreenshot("01-home-390x844");
