@@ -1,10 +1,10 @@
-import { jsxLocPlugin } from "@builder.io/vite-plugin-jsx-loc";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import fs from "node:fs";
 import path from "node:path";
 import { defineConfig, type Plugin, type ViteDevServer } from "vite";
 import { vitePluginManusRuntime } from "vite-plugin-manus-runtime";
+import { createApplication } from "./server/app";
 
 // =============================================================================
 // Manus Debug Collector - Vite Plugin
@@ -203,7 +203,17 @@ function vitePluginStorageProxy(): Plugin {
   };
 }
 
-const plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector(), vitePluginStorageProxy()];
+function vitePluginLiveRoomApi(): Plugin {
+  const liveRoomApp = createApplication();
+  return {
+    name: "live-room-api",
+    configureServer(server: ViteDevServer) {
+      server.middlewares.use(liveRoomApp);
+    },
+  };
+}
+
+const plugins = [react(), tailwindcss(), vitePluginManusRuntime(), vitePluginLiveRoomApi(), vitePluginManusDebugCollector(), vitePluginStorageProxy()];
 
 export default defineConfig({
   plugins,

@@ -215,21 +215,21 @@ function ConfettiBackground() {
           key={i}
           className="absolute rounded-sm"
           style={{
-            width: 8 + Math.random() * 8,
-            height: 8 + Math.random() * 8,
+            width: 8 + (i % 4) * 2,
+            height: 8 + ((i + 2) % 4) * 2,
             background: colors[i % colors.length],
-            left: `${Math.random() * 100}%`,
+            left: `${(i * 37) % 100}%`,
             top: -20,
           }}
           animate={{
             y: ["0vh", "110vh"],
-            rotate: [0, 360 * (Math.random() > 0.5 ? 1 : -1)],
-            x: [0, (Math.random() - 0.5) * 100],
+            rotate: [0, 360 * (i % 2 === 0 ? 1 : -1)],
+            x: [0, ((i % 7) - 3) * 14],
           }}
           transition={{
-            duration: 2 + Math.random() * 3,
-            delay: Math.random() * 2,
-            repeat: Infinity,
+            duration: 2 + (i % 5) * 0.45,
+            delay: (i % 6) * 0.18,
+            repeat: 0,
             ease: "linear",
           }}
         />

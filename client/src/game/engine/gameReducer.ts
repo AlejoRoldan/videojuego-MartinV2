@@ -57,18 +57,22 @@ function createInitialKeeper(): GoalkeeperState {
 
 function createConfettiParticles(x: number, y: number, count = 20): Particle[] {
   const colors = ["#FF6B35", "#FFD700", "#2ECC40", "#3742FA", "#FF4757", "#7BED9F"];
-  return Array.from({ length: count }, () => ({
-    id: nanoid(),
-    x,
-    y,
-    vx: (Math.random() - 0.5) * 4,
-    vy: -(Math.random() * 3 + 1),
-    color: colors[Math.floor(Math.random() * colors.length)],
-    size: Math.random() * 8 + 4,
-    life: 1,
-    maxLife: 1,
-    type: "confetti" as const,
-  }));
+  return Array.from({ length: count }, (_, index) => {
+    const angle = (index / count) * Math.PI * 2;
+    const speed = 1.2 + (index % 5) * 0.38;
+    return {
+      id: nanoid(),
+      x,
+      y,
+      vx: Math.cos(angle) * speed,
+      vy: -(1.2 + Math.abs(Math.sin(angle)) * 2.4),
+      color: colors[index % colors.length],
+      size: 4 + (index % 5) * 2,
+      life: 1,
+      maxLife: 1,
+      type: "confetti" as const,
+    };
+  });
 }
 
 function createStarParticles(x: number, y: number): Particle[] {
@@ -93,7 +97,7 @@ function createPowerParticles(x: number, y: number, power: Exclude<MathPower, nu
     turbo: "#4DD0E1",
     perfect: "#FFF3A3",
   };
-  const count = power === "perfect" ? 18 : 12;
+  const count = power === "perfect" ? 8 : 6;
   return Array.from({ length: count }, (_, i) => {
     const angle = (i / count) * Math.PI * 2;
     const speed = power === "turbo" ? 2.7 : power === "perfect" ? 2.2 : 1.8;
@@ -178,7 +182,7 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         ? Array.from({ length: config.wallCount }, (_, i) => ({
             id: i,
             position: { x: 0.2 + (i / (config.wallCount - 1 || 1)) * 0.6, y: WALL_GOAL_Y },
-            number: Math.floor(Math.random() * 8) + 2,
+            number: 2 + ((action.levelId + i * 3) % 8),
           }))
         : [];
       const challenge = generateChallenge(config, 0);
@@ -374,7 +378,7 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       let newParticles: Particle[] = [];
       let newFloatingTexts: FloatingText[] = [];
       if (result.scored) {
-        newParticles = createConfettiParticles(0.5, 0.3, state.currentMathPower === "perfect" ? 50 : 30);
+        newParticles = createConfettiParticles(0.5, 0.3, state.currentMathPower === "perfect" ? 24 : 16);
         newFloatingTexts = [createFloatingText("¡GOL!", 0.5, 0.3, "#FFD700", "xl")];
         if (newCombo > 1) newFloatingTexts.push(createFloatingText(`COMBO x${newCombo}!`, 0.5, 0.45, "#FF6B35", "lg"));
         if (isCornerGoal) newFloatingTexts.push(createFloatingText("¡ESQUINA! BONUS", 0.5, 0.55, "#7BED9F", "md"));
@@ -385,7 +389,7 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       } else {
         newFloatingTexts = [createFloatingText("¡Afuera!", 0.5, 0.3, "#FF4757", "md")];
       }
-      if (result.mathCorrect && result.scored) newParticles = [...newParticles, ...createStarParticles(0.5, 0.5)];
+      if (result.mathCorrect && result.scored) newParticles = [...newParticles, ...createStarParticles(0.5, 0.5).slice(0, 4)];
       if (result.input.mathPower) newParticles = [...newParticles, ...createPowerParticles(0.5, 0.4, result.input.mathPower)];
       if (result.mathCorrect && !result.scored) {
         newFloatingTexts.push(createFloatingText("¡Buen cálculo! El poder contó aunque el tiro fue detenido.", 0.5, 0.52, "#D8FFD8", "md"));

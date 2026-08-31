@@ -222,7 +222,7 @@ export function calculatePowerFromMath(
   const mathCorrect = answer === correctAnswer;
   const timeBonus = Math.max(0, 1 - timeTaken / timeLimit);
 
-  if (!mathCorrect) return 40 + Math.random() * 20;
+  if (!mathCorrect) return 50;
   return 70 + timeBonus * 30;
 }
 

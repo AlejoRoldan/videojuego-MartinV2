@@ -2,6 +2,19 @@ import type { GameAction, MathConcept } from "./types";
 
 export const AUTO_SHOOT_DELAY_MS = 850;
 
+export type GameplayEventKind = "math" | "shot" | "flow";
+
+export function createGameplayEventId(
+  sessionId: string,
+  levelRun: number,
+  kind: GameplayEventKind,
+  sequence: number,
+): string {
+  const safeRun = Math.max(1, Math.trunc(levelRun));
+  const safeSequence = Math.max(1, Math.trunc(sequence));
+  return `${sessionId}-run-${safeRun}-${kind}-${safeSequence}`;
+}
+
 /** Keeps timer math deterministic and easy to test outside React. */
 export function calculateRemainingMathTime(
   timeLimit: number,

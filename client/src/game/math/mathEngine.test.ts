@@ -37,8 +37,10 @@ describe("math engine", () => {
     expect(fast).toBeLessThanOrEqual(100);
   });
 
-  it("limits incorrect-answer power to 40-60", () => {
-    vi.spyOn(Math, "random").mockReturnValue(0.5);
+  it("keeps incorrect-answer power deterministic", () => {
+    vi.spyOn(Math, "random").mockImplementation(() => {
+      throw new Error("Math.random must not influence shot power");
+    });
     expect(calculatePowerFromMath(11, 12, 1, 10)).toBe(50);
   });
 

@@ -25,6 +25,7 @@ vi.mock("../engine/GameContext", () => ({
 
 import HomeScreen from "./HomeScreen";
 import LevelSelectScreen from "./LevelSelectScreen";
+import ProfileScreen from "./ProfileScreen";
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -36,6 +37,10 @@ describe("screen accessibility contracts", () => {
     expect(html.match(/<button/g)?.length).toBeGreaterThanOrEqual(7);
     expect(html).toContain('aria-pressed="true"');
     expect(html).toContain("Ritmo de partido");
+    expect(html).toContain('aria-label="Cómo jugar: apunta, resuelve y dispara"');
+    expect(html).toContain("Apunta");
+    expect(html).toContain("Resuelve");
+    expect(html).toContain("Dispara");
   });
 
   it("announces navigation and level availability", () => {
@@ -44,5 +49,11 @@ describe("screen accessibility contracts", () => {
     expect(html).toContain('aria-label="Jugar nivel 1:');
     expect(html).toContain("bloqueado");
     expect(html).toContain("disabled");
+  });
+
+  it("exposes profile name editing as a keyboard action", () => {
+    const html = renderToStaticMarkup(<ProfileScreen />);
+    expect(html).toContain('aria-label="Editar nombre del jugador, actual Martín"');
+    expect(html).toContain('aria-label="Volver al inicio"');
   });
 });

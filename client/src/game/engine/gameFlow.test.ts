@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AUTO_SHOOT_DELAY_MS,
   calculateRemainingMathTime,
+  createGameplayEventId,
   resolveMathCorrect,
   scheduleAutoShoot,
 } from "./gameFlow";
@@ -24,6 +25,15 @@ describe("GameContext coordination", () => {
     expect(resolveMathCorrect(false, "multiplication")).toBe(false);
     expect(resolveMathCorrect(null, "directions")).toBe(true);
     expect(resolveMathCorrect(null, "coordinates")).toBe(false);
+  });
+
+  it("keeps event ids unique when shot counters restart in a new level", () => {
+    const firstLevel = createGameplayEventId("session-test", 1, "math", 1);
+    const secondLevel = createGameplayEventId("session-test", 2, "math", 1);
+    const secondLevelShot = createGameplayEventId("session-test", 2, "shot", 1);
+
+    expect(new Set([firstLevel, secondLevel, secondLevelShot]).size).toBe(3);
+    expect(secondLevel).toContain("run-2-math-1");
   });
 
   it("auto-shoots once after the feedback delay", () => {

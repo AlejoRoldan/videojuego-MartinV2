@@ -39,6 +39,8 @@ jobs:
 
       - name: Functional E2E game flow
         run: pnpm test:e2e:functional
+        env:
+          QA_EVIDENCE_DIR: qa-artifacts
 
       - name: V10 adaptive multiplication E2E
         run: pnpm test:e2e:v10
@@ -49,4 +51,12 @@ jobs:
         with:
           name: coverage-summary
           path: coverage/summary.json
+          if-no-files-found: ignore
+
+      - name: Upload visual QA evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-qa-390x844
+          path: qa-artifacts/*.png
           if-no-files-found: ignore

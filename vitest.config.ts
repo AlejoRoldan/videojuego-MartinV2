@@ -10,7 +10,7 @@ export default defineConfig({
     alias: { "@": path.resolve(import.meta.dirname, "client/src") },
   },
   test: {
-    include: ["client/src/game/**/*.test.{ts,tsx}"],
+    include: ["client/src/game/**/*.test.{ts,tsx}", "server/**/*.test.ts"],
     environment: "node",
   },
 });

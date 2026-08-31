@@ -20,7 +20,8 @@ export default function DefeatScreen() {
     "¡La próxima vez será tuya!",
     "¡Sigue practicando, eres increíble!",
   ];
-  const msg = encouragements[Math.floor(Math.random() * encouragements.length)];
+  const messageIndex = (levelConfig.id + shotsScored + shotsTaken) % encouragements.length;
+  const msg = encouragements[messageIndex];
 
   return (
     <div

@@ -14,7 +14,7 @@ import {
   type GamePace,
 } from "../engine/gamePace";
 
-const HOME_BG = "/math-stadium-hero.png";
+const HOME_BG = "/math-stadium-teen.webp";
 const GAME_PACES: GamePace[] = ["easy", "medium", "match", "hard"];
 
 export default function HomeScreen() {
@@ -38,8 +38,11 @@ export default function HomeScreen() {
       style={{ minHeight: "100dvh" }}
     >
       <div
-        className="absolute inset-0 bg-cover bg-center"
-        style={{ backgroundImage: `url(${HOME_BG})` }}
+        className="absolute inset-0 bg-cover"
+        style={{
+          backgroundImage: `url(${HOME_BG})`,
+          backgroundPosition: "78% center",
+        }}
       />
       <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/60" />
 
@@ -106,14 +109,12 @@ export default function HomeScreen() {
           </div>
           <div className="flex justify-center gap-1 mt-1">
             {[...Array(5)].map((_, i) => (
-              <motion.span
+              <span
                 key={i}
-                animate={{ rotate: [0, 10, -10, 0], scale: [1, 1.2, 1] }}
-                transition={{ duration: 2, delay: i * 0.2, repeat: Infinity }}
                 className="text-yellow-400 text-lg"
               >
                 ⭐
-              </motion.span>
+              </span>
             ))}
           </div>
         </motion.div>
@@ -139,6 +140,8 @@ export default function HomeScreen() {
         transition={{ duration: 0.5, delay: 0.4, ease: [0.23, 1, 0.32, 1] }}
         className="relative z-10 w-full max-w-sm px-4 pb-6 flex flex-col gap-2"
       >
+        <GameLoopSummary />
+
         <MissionCard progress={playerProfile.missionProgress} completions={playerProfile.missionCompletions} />
 
         <div
@@ -171,6 +174,7 @@ export default function HomeScreen() {
                     color: selected ? "#231900" : "white",
                     boxShadow: selected ? "0 3px 0 #B8860B" : "none",
                     touchAction: "manipulation",
+                    minHeight: 48,
                   }}
                 >
                   <span className="text-lg leading-none">{icon}</span>
@@ -226,6 +230,36 @@ export default function HomeScreen() {
 
       <FloatingMathSymbols />
     </div>
+  );
+}
+
+function GameLoopSummary() {
+  const steps = [
+    { icon: "🎯", label: "Apunta" },
+    { icon: "🧠", label: "Resuelve" },
+    { icon: "⚽", label: "Dispara" },
+  ];
+
+  return (
+    <ol
+      aria-label="Cómo jugar: apunta, resuelve y dispara"
+      className="grid grid-cols-3 gap-2"
+    >
+      {steps.map((step, index) => (
+        <li
+          key={step.label}
+          className="rounded-xl px-2 py-1.5 text-center text-white text-[11px] font-black"
+          style={{
+            background: "rgba(5, 12, 28, 0.82)",
+            border: "1px solid rgba(255,255,255,0.24)",
+            boxShadow: "0 3px 10px rgba(0,0,0,0.24)",
+          }}
+        >
+          <span aria-hidden="true">{step.icon}</span>{" "}
+          <span className="text-white/55">{index + 1}.</span> {step.label}
+        </li>
+      ))}
+    </ol>
   );
 }
 
@@ -307,32 +341,31 @@ function SecondaryButton({
 }
 
 function FloatingMathSymbols() {
-  const symbols = ["×", "+", "÷", "=", "²", "π", "∑", "√"];
+  const symbols = [
+    { value: "×", size: 24, left: 10, top: 20 },
+    { value: "+", size: 32, left: 21, top: 37 },
+    { value: "÷", size: 27, left: 33, top: 47 },
+    { value: "=", size: 36, left: 44, top: 50 },
+    { value: "²", size: 22, left: 56, top: 43 },
+    { value: "π", size: 31, left: 67, top: 31 },
+    { value: "∑", size: 26, left: 79, top: 22 },
+    { value: "√", size: 34, left: 88, top: 28 },
+  ];
   return (
-    <div className="absolute inset-0 pointer-events-none overflow-hidden">
-      {symbols.map((sym, i) => (
-        <motion.div
-          key={i}
+    <div className="absolute inset-0 pointer-events-none overflow-hidden" aria-hidden="true">
+      {symbols.map((symbol) => (
+        <div
+          key={symbol.value}
           className="absolute font-black text-white/20 select-none"
           style={{
             fontFamily: "'Fredoka One', cursive",
-            fontSize: `${20 + Math.random() * 20}px`,
-            left: `${10 + (i / symbols.length) * 80}%`,
-            top: `${20 + Math.sin(i) * 30}%`,
-          }}
-          animate={{
-            y: [-10, 10, -10],
-            rotate: [-5, 5, -5],
-            opacity: [0.1, 0.3, 0.1],
-          }}
-          transition={{
-            duration: 3 + i * 0.5,
-            repeat: Infinity,
-            ease: "easeInOut",
+            fontSize: symbol.size,
+            left: `${symbol.left}%`,
+            top: `${symbol.top}%`,
           }}
         >
-          {sym}
-        </motion.div>
+          {symbol.value}
+        </div>
       ))}
     </div>
   );

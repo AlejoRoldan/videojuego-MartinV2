@@ -20,12 +20,12 @@ import { sounds } from "./soundSystem";
 import {
   getAssistanceThresholds,
   getAutoShootDelayMs,
-  getMathAssistanceStage,
+  getInitialAssistanceStage,
   getRetrySeconds,
   getShotAnimationDuration,
   loadGamePace,
 } from "./gamePace";
-import { calculateRemainingMathTime, resolveMathCorrect, scheduleAutoShoot } from "./gameFlow";
+import { calculateRemainingMathTime, createGameplayEventId, resolveMathCorrect, scheduleAutoShoot } from "./gameFlow";
 import { DEFAULT_PROFILE, loadProfile, saveProfile, type PlayerProfile } from "./profileMigration";
 import { recordMasteryAttempt } from "./mastery";
 
@@ -59,6 +59,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   const inFlightRef = useRef(false);
   const keeperSnapshotRef = useRef<KeeperSnapshot>(createKeeperSnapshot({ x: 0.5, y: KEEPER_GOAL_Y }, 0.3));
   const sessionIdRef = useRef(`session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  const levelRunRef = useRef(0);
 
   const clearAssistanceTimers = useCallback(() => {
     assistanceTimersRef.current.forEach(clearTimeout);
@@ -79,6 +80,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     if (directionShootTimerRef.current) clearTimeout(directionShootTimerRef.current);
     const config = getLevelById(levelId);
     if (config) {
+      levelRunRef.current += 1;
       keeperSnapshotRef.current = createKeeperSnapshot(
         { x: 0.5, y: KEEPER_GOAL_Y },
         config.keeperSpeed,
@@ -171,7 +173,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       : 0;
     const assistanceStage = s.currentChallenge?.assistanceStage;
     const mathEvent: MathAnsweredEvent = {
-      id: `${sessionIdRef.current}-math-${s.shotsTaken + 1}`,
+      id: createGameplayEventId(sessionIdRef.current, levelRunRef.current, "math", s.shotsTaken + 1),
       schemaVersion: 1,
       type: "math_answered",
       occurredAt: new Date().toISOString(),
@@ -216,7 +218,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     if (state.currentChallenge.retryGranted) return;
     const timeLimit = state.currentChallenge.timeLimit;
     const assistanceLeadSeconds = state.runtimeModifiers.assistanceLeadSeconds;
-    const initialStage = getMathAssistanceStage(timeLimit + assistanceLeadSeconds, timeLimit);
+    const initialStage = getInitialAssistanceStage(timeLimit, assistanceLeadSeconds);
     const assistanceThresholds = getAssistanceThresholds(timeLimit);
     if (initialStage === "hint") dispatch({ type: "MATH_ASSISTANCE", stage: "hint" });
     if (initialStage === "visual") dispatch({ type: "MATH_ASSISTANCE", stage: "visual" });
@@ -242,7 +244,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     const result = state.lastShotResult;
     const animationDuration = getShotAnimationDuration(loadGamePace(), result.input.mathPower);
     const shotEvent: ShotResolvedEvent = {
-      id: `${sessionIdRef.current}-shot-${state.shotsTaken + 1}`,
+      id: createGameplayEventId(sessionIdRef.current, levelRunRef.current, "shot", state.shotsTaken + 1),
       schemaVersion: 1,
       type: "shot_resolved",
       occurredAt: new Date().toISOString(),
@@ -344,7 +346,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       const intervention = s.pendingFlowIntervention;
       const flowEvent: FlowInterventionEvent | undefined = intervention
         ? {
-          id: `${sessionIdRef.current}-flow-${s.shotsTaken}`,
+          id: createGameplayEventId(sessionIdRef.current, levelRunRef.current, "flow", s.shotsTaken),
           schemaVersion: 1,
           type: "flow_intervention",
           occurredAt: new Date().toISOString(),

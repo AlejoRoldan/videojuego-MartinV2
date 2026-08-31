@@ -5,6 +5,7 @@ import {
   GAME_PACE_CONFIG,
   getAssistanceThresholds,
   getAutoShootDelayMs,
+  getInitialAssistanceStage,
   getMathAssistanceStage,
   getResultTransitionMs,
   getRetrySeconds,
@@ -65,6 +66,13 @@ describe("game pace", () => {
     expect(getMathAssistanceStage(9, 15)).toBe("hint");
     expect(getMathAssistanceStage(5, 15)).toBe("visual");
     expect(getMathAssistanceStage(2, 15)).toBe("urgent");
+  });
+
+  it("starts assistance immediately when accumulated lead crosses a threshold", () => {
+    expect(getInitialAssistanceStage(15, 0)).toBe("calm");
+    expect(getInitialAssistanceStage(15, 8)).toBe("hint");
+    expect(getInitialAssistanceStage(8, 8)).toBe("urgent");
+    expect(getInitialAssistanceStage(8, 999)).toBe("urgent");
   });
 
   it("grants one grace retry outside hard mode", () => {

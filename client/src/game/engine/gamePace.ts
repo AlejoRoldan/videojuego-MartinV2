@@ -153,6 +153,17 @@ export function getMathAssistanceStage(timeLeft: number, timeLimit?: number): Ma
   return "calm";
 }
 
+export function getInitialAssistanceStage(
+  timeLimit: number,
+  assistanceLeadSeconds: number,
+): Exclude<MathAssistanceStage, "expired"> {
+  const safeTimeLimit = Math.max(1, timeLimit);
+  const safeLead = Math.max(0, assistanceLeadSeconds);
+  const effectiveTimeLeft = Math.max(1, safeTimeLimit - safeLead);
+  const stage = getMathAssistanceStage(effectiveTimeLeft, safeTimeLimit);
+  return stage === "expired" ? "urgent" : stage;
+}
+
 export function getRetrySeconds(pace: GamePace, retryAlreadyGranted: boolean): number {
   if (retryAlreadyGranted) return 0;
   return GAME_PACE_CONFIG[pace].retrySeconds;

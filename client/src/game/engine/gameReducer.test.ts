@@ -52,8 +52,10 @@ describe("game reducer", () => {
 
   it("creates the level-five wall at the same normalized height used by physics", () => {
     const state = gameReducer(initialGameState, { type: "START_LEVEL", levelId: 5 });
+    const repeated = gameReducer(initialGameState, { type: "START_LEVEL", levelId: 5 });
     expect(state.wall).toHaveLength(3);
     expect(state.wall.every((player) => player.position.y === 0.67)).toBe(true);
+    expect(state.wall.map((player) => player.number)).toEqual(repeated.wall.map((player) => player.number));
   });
 
   it("ignores invalid level ids", () => {

@@ -104,7 +104,11 @@ export default function ProfileScreen() {
                   <input
                     value={nameInput}
                     onChange={(e) => setNameInput(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleSaveName()}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleSaveName();
+                      if (e.key === "Escape") setEditingName(false);
+                    }}
+                    aria-label="Nombre del jugador"
                     className="flex-1 px-2 py-1 rounded-lg font-black text-lg text-white bg-transparent border-2 border-white/50 outline-none"
                     style={{ fontFamily: "'Fredoka One', cursive" }}
                     autoFocus
@@ -112,21 +116,24 @@ export default function ProfileScreen() {
                   />
                   <button
                     onClick={handleSaveName}
-                    className="px-3 py-1 rounded-lg font-black text-sm text-white"
+                    aria-label="Guardar nombre"
+                    className="min-w-11 min-h-11 px-3 py-1 rounded-lg font-black text-sm text-white"
                     style={{ background: "#2ECC40", touchAction: "manipulation" }}
                   >
                     ✓
                   </button>
                 </div>
               ) : (
-                <div
-                  className="text-2xl font-black text-white flex items-center gap-2"
+                <button
+                  type="button"
+                  aria-label={`Editar nombre del jugador, actual ${playerProfile.name}`}
+                  className="min-h-11 text-2xl font-black text-white flex items-center gap-2 rounded-lg"
                   style={{ fontFamily: "'Fredoka One', cursive", touchAction: "manipulation", cursor: "pointer" }}
                   onClick={() => { sounds.click(); setEditingName(true); }}
                 >
                   {playerProfile.name}
-                  <span className="text-white/50 text-sm">✏️</span>
-                </div>
+                  <span className="text-white/50 text-sm" aria-hidden="true">✏️</span>
+                </button>
               )}
               <div className="text-white/80 text-sm font-bold">Nivel {playerProfile.level}</div>
               <div className="mt-2 h-2 rounded-full overflow-hidden bg-white/20">
