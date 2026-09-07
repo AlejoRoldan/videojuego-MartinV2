@@ -1,15 +1,58 @@
-# GOL LAB · versión_astra
+# GOL LAB · Astra 2.0
 
-[Jugar en el sitio](https://gol-lab-martin.alejor.chatgpt.site) · Acceso privado desde la cuenta del propietario.
+Academia de tiros libres para practicar multiplicación y división, con una estética deportiva adolescente, tres canchas, carrera personal y copa local para 2–4 jugadores.
 
-Documentación completa: [README de versión_astra](../README.md).
+Sitio: https://gol-lab-martin.alejor.chatgpt.site
 
-Desde esta carpeta:
+## Ejecutar
 
-```bash
-python3 -m http.server 8000
+Node.js 22 o superior. Sin instalación de dependencias.
+
+```sh
+node tools/dev-server.mjs
+node --test tests/*.test.mjs
+node tools/check.mjs
 ```
 
-Abrir http://localhost:8000. No requiere instalación ni compilación.
+Abre http://localhost:4173. El directorio publicable es `dist/`; se sirve como archivos estáticos. En GitHub, ejecuta estos comandos desde `astra/`. Las rutas `/qa/mobile` y `/qa/mobile360` son marcos de comprobación exclusivos del servidor de desarrollo.
 
-Código completo: `index.html`, `style.css` y `game.js`.
+## Historias implementadas
+
+| HU | Resultado |
+| --- | --- |
+| 01 | Controles táctiles y de teclado; ayuda; disparo visible a 360×800 y 390×844. |
+| 02 | Resolución determinista compartida con la animación; colisiones, límites del balón y guardas contra eventos duplicados. |
+| 03 | Tres escenarios de barrera y portero; posición visible antes de disparar y congelada durante el tiro. |
+| 04 | Matemáticas sin reloj; pistas y reintentos; XP otorgado una sola vez por operación; resumen separado de goles. |
+| 05 | Práctica por operación y repaso filtrado por multiplicación/división; métricas locales, sin declarar dominio. |
+| 06 | Enlace compartible y funcionamiento estático. Pendiente elegir acceso para amigos y comprobarlo desde una sesión externa. |
+| 07 | Copa local de 2–4 apodos, mismas cinco jugadas, relevo confirmado, clasificación con empate y revancha. |
+
+## Arquitectura
+
+- `dist/core/math.mjs`: operaciones, distractores, pistas y planes reproducibles.
+- `dist/core/physics.mjs`: trayectoria, geometría y resultado único del tiro.
+- `dist/core/game.mjs`: máquina de estados pura, puntuación y copa.
+- `dist/core/storage.mjs`: validación, migración, reconstrucción de sesión y escritura del progreso.
+- `dist/render.mjs`: cancha Canvas; geometría compartida con la simulación y fondo cacheado.
+- `dist/game.js`: interacción, accesibilidad, diálogos y coordinación.
+- `tests/`: pruebas de lógica, recuperación, validación y aislamiento.
+- `docs/QA.md`: evidencia de verificación y comprobaciones pendientes.
+
+Los módulos de dominio no dependen del DOM. El despliegue estático permite caché y distribución de archivos sin base de datos, sesiones de servidor ni costes de cálculo por jugador. No se ha realizado una prueba de carga ni se afirma una capacidad concreta.
+
+## Seguridad y datos
+
+No hay cuentas, chat, anuncios, analítica, paquetes de terceros ni peticiones externas del juego. La plataforma de alojamiento gestiona el acceso al sitio. CSP restringe recursos al mismo origen y prohíbe objetos y scripts inline; los apodos se insertan mediante `textContent`. El servidor local limita los archivos a `dist/` y sirve `nosniff`.
+
+El progreso se valida y limita antes de cargarlo. Se conserva una instantánea atómica de carrera; al recargar se reconstruye la partida sin volver a entregar XP. Una pestaña detecta cambios de otra y solicita recargar. Los fallos de almacenamiento permiten seguir jugando con un aviso. Los apodos y resultados de la copa viven solo en memoria y se descartan al cerrarla.
+
+El almacenamiento local es editable por su propietario: no es una frontera de autenticación ni un sistema antitrampas. No existe clasificación online. Para introducir competición remota se necesitarían autoridad de servidor, identidad, límites de solicitudes, reglas de privacidad y pruebas específicas antes de activarla.
+
+## Reglas de puntuación
+
+20 XP por respuesta correcta sin ayuda, 10 con pista o error previo, 15 por gol y 60 al lograr al menos 3 goles en un partido. Ligas a 0, 180 y 420 XP. Repaso y copa no entregan XP de carrera. En la copa gana quien marque más goles; después se comparan aciertos sin ayuda y, si persiste la igualdad, se comparte puesto.
+
+## Publicación
+
+Se conserva el acceso existente del sitio. Compartir un enlace no modifica permisos. Antes de la prueba con amigos: elegir público por enlace o invitados y verificar que alguien ajeno a la cuenta propietaria pueda entrar. No se han enviado mensajes a participantes.

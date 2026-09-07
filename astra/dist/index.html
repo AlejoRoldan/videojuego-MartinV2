@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#081214">
+  <meta name="description" content="Resuelve, apunta y dispara. Multiplicación, división y copa de tiros libres por turnos con amigos.">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>GOL LAB · Tiros libres</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <span class="brand"><span class="mark">G/</span> GOL<span>LAB</span></span>
+  <span class="edition">FREE KICK ACADEMY</span>
+  <nav aria-label="Opciones de juego"><button id="help" class="quiet">Cómo jugar</button><button id="sound" class="quiet" aria-pressed="false">Sonido: OFF</button></nav>
+</header>
+<main>
+  <section class="heading"><div><span class="eyebrow">TU CANCHA. TU SIGUIENTE NIVEL.</span><h1>El gol empieza en tu cabeza.</h1></div><div class="player"><span class="avatar">G</span><div><b id="playerName">Tu carrera</b><small id="rank">Cantera · Nivel 1</small></div><strong id="xp">0 XP</strong></div></section>
+  <div class="toolbar"><button id="career" class="tab active">Entrenar</button><button id="cup" class="tab">Copa con amigos</button><button id="practice" class="tab">Mi práctica</button><button id="share" class="tab">Compartir enlace</button></div>
+  <p id="storageNotice" class="notice" role="status" hidden></p>
+  <section id="intro" class="intro" hidden aria-label="Ayuda del primer tiro"><div><b>Resuelve → apunta → dispara</b><p>Sin reloj. Usa una pista si hace falta. Después busca un hueco en el arco.</p></div><button id="dismissHelp" class="tab">Entendido</button></section>
+  <div class="layout" id="playSurface">
+    <section class="arena" aria-label="Cancha y marcador">
+      <div class="scoreboard"><div><span id="stadium">CANCHA DE BARRIO</span><strong id="leagueTitle">La cantera</strong></div><div class="score"><b id="goals">0</b><span>GOLES</span></div><div class="shots"><span id="shotLabel">TIRO 1 DE 5</span><div id="dots" aria-label="Resultado de los tiros"></div></div></div>
+      <div class="pitch"><canvas id="game" width="1100" height="650" tabindex="0" aria-label="Cancha. Apunta dentro del arco con un toque o con las flechas. Pulsa espacio para disparar." aria-describedby="sceneDescription"></canvas><div class="pitch-tag"><span id="phaseTag">PREPARA LA JUGADA</span></div><div id="celebration" aria-hidden="true"></div><div class="pitch-caption">GOL LAB <span>22 m · Tiro libre</span></div></div>
+      <div class="arena-footer"><span id="streak">Racha: 0</span><span id="best">Récord: 0 goles</span></div>
+      <p id="sceneDescription" class="scene-description"></p>
+    </section>
+    <aside class="console" aria-label="Controles del partido">
+      <div class="step"><span id="stepNo">01</span><div><small id="stepSmall">PIENSA LA JUGADA</small><h2 id="stepTitle">Resuelve y prepara el tiro</h2></div></div>
+      <section id="questionPanel">
+        <div class="mode" role="group" aria-label="Tipo de operación"><button data-mode="multiply" aria-pressed="true">Multiplicar</button><button data-mode="divide" aria-pressed="false">Dividir</button><button data-mode="mixed" aria-pressed="false">Mixto</button></div>
+        <p class="subtle">Sin reloj. Encuentra tu ritmo.</p><div class="equation" id="equation"></div><div id="answers" class="answers" role="group" aria-label="Respuestas"></div><button id="hint" class="text-button">Dame una pista</button>
+      </section>
+      <section id="aimPanel" hidden>
+        <p class="subtle aim-intro">Toca dentro del arco o usa estos controles.</p>
+        <label for="aimX">Dirección <output id="aimValue" for="aimX">Centro</output></label><input id="aimX" type="range" min="280" max="820" value="550" step="5">
+        <label for="aimY">Altura <output id="heightValue" for="aimY">Media</output></label><input id="aimY" type="range" min="192" max="376" value="300" step="1">
+        <label for="power">Potencia <output id="powerValue" for="power">50%</output></label><input id="power" type="range" min="30" max="100" value="50">
+        <p class="tip" id="powerTip">Zona útil: 60–85%. Menos potencia: más bajo. Más de 85%: más alto.</p><button id="shoot" class="primary">DISPARAR ↗</button>
+      </section>
+      <section id="flightPanel" hidden><p class="subtle">Balón en juego…</p></section>
+      <section id="resultPanel" hidden><h3 id="resultTitle" tabindex="-1"></h3><p id="resultText"></p><div id="summaryStats"></div><ul id="reviewList"></ul><button id="next" class="primary">SIGUIENTE TIRO →</button><button id="review" class="tab" hidden>Repasar estas operaciones</button></section>
+      <p id="feedback" class="feedback" aria-live="polite" aria-atomic="true"></p>
+      <div class="mission"><small id="missionLabel">OBJETIVO DEL PARTIDO</small><b id="missionText">Marca 3 goles en 5 tiros</b><span id="missionReward">+60 XP al conseguirlo</span></div>
+    </aside>
+  </div>
+  <section class="journey" id="journey"><div class="journey-head"><div><span class="eyebrow">DE LA CANCHA AL ESTADIO</span><h2>Tu carrera empieza aquí</h2></div><p id="progressText"></p></div><div id="leagues" class="leagues"></div></section>
+  <footer>Sesiones cortas. Grandes jugadas.<span>Progreso en este navegador · Astra 2.0</span></footer>
+</main>
+<dialog id="modal" aria-labelledby="modalTitle"><div class="modal-head"><h2 id="modalTitle"></h2><button id="closeModal" class="tab" aria-label="Cerrar ventana">Cerrar</button></div><div id="modalBody"></div><div id="modalActions"></div></dialog>
+<noscript>Activa JavaScript para jugar a GOL LAB.</noscript>
+<script type="module" src="game.js"></script>
+</body>
+</html>
