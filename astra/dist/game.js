@@ -3,6 +3,7 @@ import { createMatch, reduceMatch, summary, currentQuestion, createCup, cupRanki
 import { FIELD, SCENARIOS, insideGoal } from './core/physics.mjs';
 import { ProfileStore, STORAGE_KEY, recordPractice } from './core/storage.mjs';
 import { createRenderer } from './render.mjs';
+import { shotFromDrag } from './core/gesture.mjs';
 
 const $ = id => document.getElementById(id);
 const seed = () => crypto.getRandomValues(new Uint32Array(1))[0];
@@ -21,6 +22,7 @@ const repository = new ProfileStore(storage);
 let state = repository.load();
 state.match ||= createMatch({ seed: seed() });
 let cup = null, cupMatch = null, blocked = false, frame = 0, sound = false, audioContext;
+let drag = null, visualFrame = 0, lastPaint = 0, resultAt = -10000;
 let dialogCancel = null;
 let dialogPurpose = '', feedback = '', lastPhase = '', restoreFocus = null;
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
@@ -72,8 +74,8 @@ function dispatch(event) {
     feedback = m.phase === 'question' ? `Casi. ${hint(q)}` : `¡Correcto! ${label(q)} = ${q.answer}.${update.reward ? ` +${update.reward} XP.` : ''}`;
     tone(m.phase === 'question' ? 180 : 580);
   } else if (event.type === 'NEXT') feedback = '';
-  else if (event.type === 'SHOOT') feedback = 'Balón en juego…';
-  else if (event.type === 'FINISH') { feedback = m.outcome.message; tone(m.outcome.goal ? 780 : 180, .2); }
+  else if (event.type === 'SHOOT') { feedback = 'Balón en juego…'; stadiumSound('kick'); }
+  else if (event.type === 'FINISH') { resultAt = performance.now(); feedback = m.outcome.message; stadiumSound(m.outcome.goal ? 'goal' : m.outcome.type); }
   render(event.type === 'AIM');
   if (event.type === 'SHOOT') animate();
   if (m.phase !== before.phase && ['aim', 'result'].includes(m.phase)) {
@@ -85,17 +87,42 @@ function animate() {
   cancelAnimationFrame(frame);
   const match = active();
   if (match.phase !== 'flight' || blocked) return;
-  if (reducedMotion.matches) { renderer.draw(match, 1); dispatch({ type: 'FINISH' }); return; }
+  if (reducedMotion.matches) { renderer.draw(match, 1, {reduced:true}); dispatch({type:'FINISH'}); return; }
   let start;
+  const flightMs = (1150 - match.aim.power * 4) * match.outcome.stop;
   function tick(now) {
     if (active() !== match || blocked) return;
     start ??= now;
-    const fraction = Math.min(1, (now - start) / (1000 * match.outcome.stop));
-    renderer.draw(match, fraction);
+    const elapsed = now - start;
+    const fraction = Math.min(1, Math.max(0, elapsed - 280) / flightMs);
+    renderer.draw(match, fraction, {time:now, windup:Math.min(1,elapsed/280)});
     if (fraction < 1) frame = requestAnimationFrame(tick);
-    else dispatch({ type: 'FINISH' });
+    else dispatch({type:'FINISH'});
   }
   frame = requestAnimationFrame(tick);
+}
+function ambient(now) {
+  if (now-lastPaint >= 33 && !document.hidden && !blocked && !$('modal').open && active().phase !== 'flight') {
+    lastPaint=now;
+    const m=active();
+    renderer.draw(m, ['result','end'].includes(m.phase)?1:0, {time:now,resultAge:now-resultAt,reduced:reducedMotion.matches});
+  }
+  visualFrame=requestAnimationFrame(ambient);
+}
+function stadiumSound(type) {
+  if (!sound) return;
+  tone(type==='kick'?90:type==='goal'?520:145, .18);
+  try {
+    const duration=type==='goal'?1.6:type==='kick'?.12:.28;
+    const buffer=audioContext.createBuffer(1,Math.floor(audioContext.sampleRate*duration),audioContext.sampleRate);
+    const samples=buffer.getChannelData(0);
+    for(let i=0;i<samples.length;i++)samples[i]=(Math.random()*2-1)*Math.sin(Math.PI*i/samples.length);
+    const source=audioContext.createBufferSource(),filter=audioContext.createBiquadFilter(),gain=audioContext.createGain();
+    source.buffer=buffer;filter.type='lowpass';filter.frequency.value=type==='goal'?1700:700;gain.gain.value=type==='goal'?.10:.15;
+    source.connect(filter);filter.connect(gain);gain.connect(audioContext.destination);source.start();
+    source.onended=()=>{source.disconnect();filter.disconnect();gain.disconnect();};
+    if(type==='goal'){tone(660,.45);tone(780,.65);}
+  } catch { /* Audio is optional; gameplay remains available. */ }
 }
 function stat(value, description) {
   const box = node('div'); box.append(node('b', String(value)), node('span', description)); return box;
@@ -121,7 +148,10 @@ function render(aimOnly = false) {
   $('best').textContent = cup ? 'Mismas jugadas para todos' : `Récord: ${state.profile.best} goles`;
   $('sceneDescription').textContent = `${scene.name}. Portero ${scene.keeper < 500 ? 'a la izquierda' : scene.keeper > 600 ? 'a la derecha' : 'en el centro'}. Busca un hueco o supera la barrera por arriba.`;
   const phaseTitle = { question: 'PREPARA LA JUGADA', aim: 'APUNTA Y DISPARA', flight: 'BALÓN EN JUEGO', result: 'REVISA TU JUGADA', end: 'FINAL DEL PARTIDO' };
-  $('phaseTag').textContent = phaseTitle[m.phase];
+  $('phaseTag').textContent = m.index === 4 && m.phase === 'aim' ? 'ÚLTIMO TIRO · HAZLO CONTAR' : phaseTitle[m.phase];
+  $('gestureHint').hidden = m.phase !== 'aim';
+  $('shotStyle').textContent = m.phase === 'result' && m.outcome.goal ? (Math.abs(m.aim.spin || 0) > .4 ? 'GOL CON EFECTO' : m.outcome.end.y < 250 ? 'A LA ESCUADRA' : 'BUENA DEFINICIÓN') : '';
+  document.body.dataset.outcome = m.phase === 'result' ? m.outcome.type : '';
   $('stepNo').textContent = m.phase === 'question' ? '01' : m.phase === 'aim' ? '02' : '03';
   $('stepSmall').textContent = phaseTitle[m.phase];
   $('stepTitle').textContent = m.phase === 'question' ? 'Resuelve y prepara el tiro' : m.phase === 'aim' ? 'Busca un hueco' : m.phase === 'end' ? 'Tu partido, en números' : 'Una jugada más';
@@ -177,7 +207,9 @@ function renderAim(m) {
   $('aimValue').textContent = m.aim.x < 490 ? 'Izquierda' : m.aim.x > 610 ? 'Derecha' : 'Centro';
   $('heightValue').textContent = m.aim.y < 250 ? 'Alta' : m.aim.y > 325 ? 'Baja' : 'Media';
   $('powerValue').textContent = `${m.aim.power}%`;
-  for (const id of ['aimX', 'aimY', 'power']) $(id).disabled = blocked || m.phase !== 'aim';
+  $('spin').value = m.aim.spin || 0;
+  $('spinValue').textContent = !m.aim.spin ? 'Recto' : m.aim.spin < 0 ? 'Izquierda' : 'Derecha';
+  for (const id of ['aimX', 'aimY', 'power', 'spin']) $(id).disabled = blocked || m.phase !== 'aim';
 }
 function openDialog(title, purpose = 'normal') {
   if ($('modal').open) $('modal').close();
@@ -290,7 +322,7 @@ async function share() {
 }
 $('help').addEventListener('click', () => {
   openDialog('Resuelve, apunta y dispara');
-  for (const text of ['1. Resuelve la operación. Puedes pensar sin reloj y pedir una pista.', '2. Apunta a un hueco del arco. El toque solo actúa dentro del arco; las flechas también sirven.', '3. Elige potencia: 60–85% mantiene la altura elegida. Pulsa Disparar o espacio con el foco en la cancha.', '4. Mira la causa del resultado. Al terminar puedes repasar o pedir revancha.']) $('modalBody').append(node('p', text));
+  for (const text of ['1. Resuelve la operación. Puedes pensar sin reloj y pedir una pista.', '2. Arrastra desde el balón hasta un rincón del arco y suelta para rematar. También puedes tocar el arco y usar Disparar.', '3. Usa Efecto para rodear la barrera. La curva cambia el recorrido, pero termina en tu objetivo. Con teclado: flechas para apuntar y espacio para rematar.', '4. Mira la causa del resultado. Al terminar puedes repasar o pedir revancha.']) $('modalBody').append(node('p', text));
   $('modalActions').append(button('Entendido', closeDialog, 'primary'));
 });
 $('dismissHelp').addEventListener('click', () => { persist({ ...state, profile: { ...state.profile, tutorialSeen: true } }); render(); });
@@ -316,15 +348,34 @@ $('closeModal').addEventListener('click', () => {
 });
 $('modal').addEventListener('cancel', e => { e.preventDefault(); $('closeModal').click(); });
 for (const b of document.querySelectorAll('[data-mode]')) b.addEventListener('click', () => { if (b.dataset.mode !== state.match.mode) changeTraining(state.match.league, b.dataset.mode); });
-for (const id of ['aimX', 'aimY', 'power']) $(id).addEventListener('input', () => dispatch({ type: 'AIM', value: { x: Number($('aimX').value), y: Number($('aimY').value), power: Number($('power').value) } }));
+for (const id of ['aimX', 'aimY', 'power', 'spin']) $(id).addEventListener('input', () => dispatch({ type: 'AIM', value: { x: Number($('aimX').value), y: Number($('aimY').value), power: Number($('power').value), spin: Number($('spin').value) } }));
+function pointerPoint(event) {
+  const r=$('game').getBoundingClientRect();
+  return {x:(event.clientX-r.left)/r.width*FIELD.width,y:(event.clientY-r.top)/r.height*FIELD.height};
+}
 $('game').addEventListener('pointerdown', event => {
-  if (active().phase !== 'aim') return;
-  const rect = $('game').getBoundingClientRect();
-  const x = (event.clientX - rect.left) / rect.width * FIELD.width;
-  const y = (event.clientY - rect.top) / rect.height * FIELD.height;
-  if (!insideGoal(x, y)) return;
-  dispatch({ type: 'AIM', value: { x: Math.round(x), y: Math.round(y), power: active().aim.power } });
+  if (active().phase !== 'aim' || blocked || drag || !event.isPrimary || event.button !== 0) return;
+  const point=pointerPoint(event);
+  if (Math.hypot(point.x-550,point.y-584)<110) {
+    event.preventDefault();drag={start:point,end:point,time:performance.now(),id:event.pointerId};
+    $('game').setPointerCapture(event.pointerId);$('gestureHint').textContent='LLEVA EL BALÓN A UN RINCÓN Y SUELTA';
+  } else if (insideGoal(point.x,point.y)) dispatch({type:'AIM',value:{...active().aim,x:Math.round(point.x),y:Math.round(point.y)}});
 });
+$('game').addEventListener('pointermove',event=>{
+  if (!drag || drag.id!==event.pointerId || active().phase!=='aim') return;
+  drag.end=pointerPoint(event);
+  const aim=shotFromDrag(drag.start,drag.end,Math.max(60,performance.now()-drag.time),active().aim.spin||0);
+  if(aim)dispatch({type:'AIM',value:aim});
+});
+function cancelDrag(){drag=null;$('gestureHint').textContent='ARRASTRA EL BALÓN · SUELTA PARA REMATAR';}
+$('game').addEventListener('pointerup',event=>{
+  if(!drag||drag.id!==event.pointerId)return;
+  const aim=shotFromDrag(drag.start,pointerPoint(event),performance.now()-drag.time,active().aim.spin||0);
+  cancelDrag();
+  if(aim){dispatch({type:'AIM',value:aim});dispatch({type:'SHOOT'});}
+});
+$('game').addEventListener('pointercancel',cancelDrag);
+$('game').addEventListener('lostpointercapture',cancelDrag);
 $('game').addEventListener('keydown', event => {
   if (active().phase !== 'aim' || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ' '].includes(event.key)) return;
   event.preventDefault();
@@ -338,10 +389,12 @@ $('game').addEventListener('keydown', event => {
 });
 window.addEventListener('storage', event => { if (event.key === STORAGE_KEY && event.newValue !== event.oldValue) conflict(); });
 window.addEventListener('beforeunload', event => { if (cup && cup.phase !== 'end') { event.preventDefault(); event.returnValue = ''; } });
-window.addEventListener('pagehide', () => { cancelAnimationFrame(frame); audioContext?.close().catch(() => {}); audioContext = null; });
-window.addEventListener('pageshow', event => { if (event.persisted && active().phase === 'flight') animate(); });
+window.addEventListener('pagehide', () => { cancelAnimationFrame(frame); cancelAnimationFrame(visualFrame); audioContext?.close().catch(() => {}); audioContext = null; });
+window.addEventListener('pageshow', event => { if(event.persisted){cancelAnimationFrame(visualFrame);visualFrame=requestAnimationFrame(ambient);if(active().phase==='flight')animate();} });
 reducedMotion.addEventListener('change', () => { if (active().phase === 'flight') animate(); });
 if (!repository.available) notice('El guardado local no está disponible. Puedes jugar durante esta sesión.');
 else persist();
 render();
 if (active().phase === 'flight') animate();
+
+visualFrame=requestAnimationFrame(ambient);

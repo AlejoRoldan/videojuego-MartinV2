@@ -1,4 +1,4 @@
-# GOL LAB · Astra 2.0
+# GOL LAB · Astra 2.1
 
 Academia de tiros libres para practicar multiplicación y división, con una estética deportiva adolescente, tres canchas, carrera personal y copa local para 2–4 jugadores.
 
@@ -27,6 +27,10 @@ Abre http://localhost:4173. El directorio publicable es `dist/`; se sirve como a
 | 05 | Práctica por operación y repaso filtrado por multiplicación/división; métricas locales, sin declarar dominio. |
 | 06 | Enlace compartible y funcionamiento estático. Pendiente elegir acceso para amigos y comprobarlo desde una sesión externa. |
 | 07 | Copa local de 2–4 apodos, mismas cinco jugadas, relevo confirmado, clasificación con empate y revancha. |
+
+## Jugabilidad recuperada de V10–V12
+
+Arrastra el balón al arco y suelta para rematar. El control de efecto permite curvar la trayectoria alrededor de la barrera. Cámara de seguimiento, carrera y golpeo, portero que se lanza, estadio reutilizado de la versión anterior y audio diferenciado. Se conservan controles de teclado y deslizadores. El efecto es arcade y se selecciona antes del tiro; no incorpora corrección en pleno vuelo.
 
 ## Arquitectura
 

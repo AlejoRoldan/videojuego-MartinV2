@@ -6,6 +6,7 @@ const html = await readFile('dist/index.html', 'utf8');
 for (const match of html.matchAll(/(?:src|href)="([^"]+)"/g)) {
   if (!match[1].startsWith('#')) await readFile(resolve('dist', match[1]));
 }
+await readFile('dist/assets/stadium.webp');
 const scripts = ['dist/game.js', 'dist/render.mjs', ...(await readdir('dist/core')).map(n => `dist/core/${n}`)];
 for (const script of scripts) {
   const code = await readFile(script, 'utf8');

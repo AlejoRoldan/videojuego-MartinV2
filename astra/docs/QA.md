@@ -27,3 +27,16 @@ La inspección se hizo en Chromium de escritorio con marcos de tamaño móvil: n
 4. Observar una sesión con Martín y sus amigos: comprensión del tiro, interés por revancha y facilidad para pedir ayuda. No hay mediciones de aprendizaje ni retención todavía.
 
 No se ha validado el rendimiento bajo carga, multijugador remoto ni compatibilidad con todos los navegadores. El diseño actual es estático y la copa es exclusivamente local.
+
+## Revisión de jugabilidad · Astra 2.1
+
+Se compararon las implementaciones V9, V10 y V12 disponibles en el proyecto: cámara de seguimiento, gestos, efecto y atmósfera de estadio. Se adaptaron a Astra sin sustituir el panel ni el progreso local.
+
+- Arrastre desde el balón hacia el arco; lanzamiento al soltar. Se ignoran movimientos cortos, descendentes, fuera del balón y cancelados.
+- Efecto previo al tiro: trayectoria curva compartida entre colisión y dibujo; conserva el punto de destino. Es una mecánica arcade, no una simulación completa de Magnus.
+- Carrera y golpeo del jugador; cámara que avanza, portero que se lanza, estela breve, reacción de red y celebración. Movimiento reducido conserva los controles y omite la secuencia animada.
+- Estadio reutilizado de `client/public/goal-night-teen.webp`; recortes calculados a partir de sus dimensiones reales y portería dibujada con las dimensiones del motor.
+- El gesto fue probado en Chromium mediante arrastre real del puntero; el gol y el XP se conservaron al recargar.
+- 37 pruebas automatizadas: se agregaron validación de gestos, efecto sobre la barrera, compatibilidad de partidas antiguas y recuperación de tiros con efecto.
+
+La diversión y la sensación de realismo requieren la valoración del usuario. Esta entrega no se presenta como validada por adolescentes ni como simulación 3D física completa. El acceso continúa privado.

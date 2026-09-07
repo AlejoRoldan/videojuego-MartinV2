@@ -4,22 +4,22 @@ export const SCENARIOS = Object.freeze([
   Object.freeze({ name: 'Barrera a la derecha', keeper: 430, wall: 635 }),
   Object.freeze({ name: 'Barrera en el centro', keeper: 680, wall: 550 }),
 ]);
-export const DEFAULT_AIM = Object.freeze({ x: 550, y: 300, power: 50 });
+export const DEFAULT_AIM = Object.freeze({ x: 550, y: 300, power: 50, spin: 0 });
 export const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 export function normalizeAim(aim) {
-  if (!aim || ![aim.x, aim.y, aim.power].every(Number.isFinite)) throw new RangeError('Invalid aim');
-  return { x: clamp(aim.x, FIELD.left, FIELD.right), y: clamp(aim.y, FIELD.top, FIELD.bottom), power: clamp(aim.power, 30, 100) };
+  if (!aim || ![aim.x, aim.y, aim.power, aim.spin ?? 0].every(Number.isFinite)) throw new RangeError('Invalid aim');
+  return { x: clamp(aim.x, FIELD.left, FIELD.right), y: clamp(aim.y, FIELD.top, FIELD.bottom), power: clamp(aim.power, 30, 100), spin: clamp(aim.spin ?? 0, -1, 1) };
 }
 export function insideGoal(x, y) { return Number.isFinite(x) && Number.isFinite(y) && x >= FIELD.left && x <= FIELD.right && y >= FIELD.top && y <= FIELD.bottom; }
 export function pathPoint(end, t) {
   const n = clamp(t, 0, 1);
-  return { x: 550 + (end.x - 550) * n, y: 584 + (end.y - 584) * n - 65 * Math.sin(Math.PI * n), r: 14 - 7 * n };
+  return { x: 550 + (end.x - 550) * n + (end.spin || 0) * 150 * Math.sin(Math.PI * n), y: 584 + (end.y - 584) * n - 65 * Math.sin(Math.PI * n), r: 14 - 7 * n };
 }
 export function resolveShot(input, scenarioIndex) {
   const aim = normalizeAim(input);
   const scene = SCENARIOS[scenarioIndex];
   if (!scene) throw new RangeError('Invalid scenario');
-  const end = { x: aim.x, y: aim.y + (aim.power < 60 ? (60 - aim.power) * 4 : aim.power > 85 ? -(aim.power - 85) * 4 : 0) };
+  const end = { x: aim.x, spin: aim.spin, y: aim.y + (aim.power < 60 ? (60 - aim.power) * 4 : aim.power > 85 ? -(aim.power - 85) * 4 : 0) };
   const point = pathPoint(end, FIELD.wallDepth);
   let type = 'goal', message = 'Encontraste un espacio libre. ¡Buena definición!', t = 1;
   // The rendered wall and collision rectangle share the same coordinates.

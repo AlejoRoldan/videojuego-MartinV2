@@ -1,92 +1,128 @@
-import { FIELD, SCENARIOS, pathPoint } from './core/physics.mjs';
+import { FIELD, SCENARIOS, pathPoint, clamp } from './core/physics.mjs';
 
-/** Stateless Canvas renderer. Collision geometry belongs exclusively to physics. */
+/** Presentation uses the exact flight and contact points from the resolver. */
 export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Canvas 2D no está disponible en este navegador.');
-  const line = (x1, y1, x2, y2, color = '#d8ebd6', width = 2) => {
-    ctx.strokeStyle = color; ctx.lineWidth = width;
-    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+  if (!ctx) throw new Error('Canvas no disponible.');
+  const photo = new Image(); photo.src = new URL('./assets/stadium.webp', import.meta.url).href;
+  let cachedLeague = -1, background, photoReady = false;
+  photo.onload = () => { photoReady = true; cachedLeague = -1; };
+  const layer = document.createElement('canvas'); layer.width = 1100; layer.height = 650;
+  const line = (ax, ay, bx, by, color, width = 2) => {
+    ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
   };
-  const poly = (points, color) => {
-    ctx.fillStyle = color; ctx.beginPath();
-    points.forEach((p, i) => i ? ctx.lineTo(...p) : ctx.moveTo(...p));
-    ctx.closePath(); ctx.fill();
+  const polygon = (points, fill) => {
+    ctx.fillStyle = fill; ctx.beginPath(); points.forEach(([x,y], i) => i ? ctx.lineTo(x,y) : ctx.moveTo(x,y)); ctx.closePath(); ctx.fill();
   };
-  const person = (x, y, scale, shirt, keeper = false, catchPoint = null) => {
-    ctx.save(); ctx.translate(x, y); ctx.scale(scale, scale);
-    ctx.fillStyle = '#001d2080'; ctx.beginPath(); ctx.ellipse(0, 4, 23, 7, 0, 0, Math.PI * 2); ctx.fill();
-    line(-7, -22, -12, 0, '#14252c', 9); line(7, -22, 13, 0, '#14252c', 9);
-    line(-13, 0, -20, 0, '#f2ffac', 5); line(13, 0, 20, 0, '#f2ffac', 5);
-    poly([[-14, -57], [14, -57], [12, -22], [-12, -22]], shirt);
-    const hand = catchPoint ? { x: (catchPoint.x - x) / scale, y: (catchPoint.y - y) / scale } : null;
-    line(-12, -50, hand ? hand.x - 5 : keeper ? -37 : -20, hand ? hand.y : keeper ? -47 : -29, shirt, 9);
-    line(12, -50, hand ? hand.x + 5 : keeper ? 37 : 20, hand ? hand.y : keeper ? -47 : -29, shirt, 9);
-    if (hand) { line(hand.x - 7, hand.y, hand.x + 7, hand.y, '#f9fff2', 9); }
-    ctx.fillStyle = '#bf957d'; ctx.beginPath(); ctx.arc(0, -69, 10, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#172327'; ctx.beginPath(); ctx.arc(0, -72, 10, Math.PI, Math.PI * 2); ctx.fill(); ctx.restore();
-  };
-  let background = null, cachedLeague = -1;
+  const ellipse = (x,y,rx,ry,color) => {ctx.fillStyle=color;ctx.beginPath();ctx.ellipse(x,y,rx,ry,0,0,Math.PI*2);ctx.fill();};
+  const smooth = t => {t=clamp(t,0,1);return t*t*(3-2*t);};
   function stadium(league) {
-    const sky = ctx.createLinearGradient(0, 0, 0, 250);
-    sky.addColorStop(0, league === 2 ? '#061123' : '#133039'); sky.addColorStop(1, '#63817b');
-    ctx.fillStyle = sky; ctx.fillRect(0, 0, 1100, 280);
-    poly([[0, 135], [160, 90], [940, 90], [1100, 135], [1100, 300], [0, 300]], '#172c32');
-    for (let row = 0; row < 8; row++) {
-      line(0, 145 + row * 16, 1100, 145 + row * 16, '#406267', 2);
-      for (let col = 0; col < 68; col++) {
-        ctx.fillStyle = ['#6d8987', '#98a9a0', '#2a4a4b', '#b9c09e'][(row * 17 + col * 7) % 4];
-        ctx.fillRect(col * 17 + row % 2 * 8, 140 + row * 16, 4, 5);
-      }
+    ctx.fillStyle = '#071727'; ctx.fillRect(0,0,1100,650);
+    if (photoReady) {
+      // Reuse the stadium artwork from V10; crop out its goal so geometry stays authoritative.
+      const sx=photo.naturalWidth/1152, sy=photo.naturalHeight/2048;
+      ctx.drawImage(photo,0,250*sy,1152*sx,630*sy,0,0,1100,192);
+      ctx.drawImage(photo,0,760*sy,1152*sx,115*sy,0,192,1100,185);
+      ctx.drawImage(photo,0,1170*sy,1152*sx,878*sy,0,376,1100,274);
+    } else {
+      const sky=ctx.createLinearGradient(0,0,0,377);sky.addColorStop(0,'#07172a');sky.addColorStop(1,'#225369');ctx.fillStyle=sky;ctx.fillRect(0,0,1100,377);
+      ctx.fillStyle='#205133';ctx.fillRect(0,377,1100,273);
     }
-    line(0, 132, 160, 88, '#96b0ab', 3); line(160, 88, 940, 88, '#96b0ab', 3); line(940, 88, 1100, 132, '#96b0ab', 3);
-    for (const x of [95, 1005]) {
-      line(x, 35, x, 270, '#577a78', 5); ctx.fillStyle = '#edffd5'; ctx.fillRect(x - 33, 32, 66, 9);
-      const glow = ctx.createRadialGradient(x, 38, 2, x, 38, 110); glow.addColorStop(0, '#e5ffc947'); glow.addColorStop(1, '#e5ffc900');
-      ctx.fillStyle = glow; ctx.fillRect(x - 110, 0, 220, 150);
+    const wash = ['#5b422716','#17395714','#11164920'][league];ctx.fillStyle=wash;ctx.fillRect(0,0,1100,650);
+    for(let i=0;i<8;i++) {
+      const a=376+(i/8)**1.8*274,b=376+((i+1)/8)**1.8*274;
+      ctx.fillStyle=i%2?'#0519082c':'#7dcf4313';ctx.fillRect(0,a,1100,b-a);
     }
-    const grass = ctx.createLinearGradient(0, 260, 0, 650); grass.addColorStop(0, '#4b7851'); grass.addColorStop(1, '#173d2d');
-    ctx.fillStyle = grass; ctx.fillRect(0, 270, 1100, 380);
-    for (let i = 0; i < 8; i++) {
-      const a = 270 + (i / 8) ** 1.6 * 380, b = 270 + ((i + 1) / 8) ** 1.6 * 380;
-      ctx.fillStyle = i % 2 ? '#b0cc7020' : '#082f1919'; ctx.fillRect(0, a, 1100, b - a);
-    }
-    for (const p of [[0, 377, 1100, 377], [240, 377, 40, 650], [860, 377, 1060, 650], [125, 529, 975, 529], [337, 377, 287, 452], [763, 377, 813, 452], [287, 452, 813, 452]]) line(...p, '#d7e6c285', 2);
-    ctx.strokeStyle = '#d7e6c270'; ctx.lineWidth = 3; ctx.beginPath(); ctx.ellipse(550, 529, 150, 48, 0, 0, Math.PI); ctx.stroke();
-    const { left, right, top, bottom } = FIELD;
-    poly([[left, top], [right, top], [right, bottom], [left, bottom]], '#071c3038');
-    for (let x = left; x <= right; x += 20) line(x, top, x, bottom, '#e4f2ef48', 1);
-    for (let y = top; y <= bottom; y += 15) line(left, y, right, y, '#e4f2ef48', 1);
-    line(left, bottom, left, top, '#edf8ef', 7); line(left, top, right, top, '#edf8ef', 7); line(right, top, right, bottom, '#edf8ef', 7);
+    for(const p of [[0,377,1100,377],[200,377,-95,650],[900,377,1195,650],[72,529,1028,529],[337,377,280,453],[763,377,820,453],[280,453,820,453]])line(...p,'#e6f1d5a8',2);
+    ctx.strokeStyle='#e6f1d586';ctx.lineWidth=2;ctx.beginPath();ctx.ellipse(550,529,151,44,0,0,Math.PI);ctx.stroke();
+    // Side netting and a recessed back plane create depth without moving the scoring plane.
+    polygon([[280,192],[310,211],[310,367],[280,376]],'#d6ecf11b');
+    polygon([[820,192],[790,211],[790,367],[820,376]],'#d6ecf11b');
+    polygon([[280,192],[820,192],[790,211],[310,211]],'#d6ecf12b');
+    polygon([[310,211],[790,211],[790,367],[310,367]],'#02111c9c');
+    for(let x=310;x<=790;x+=16)line(x,211,x,367,'#d9edf754',.8);
+    for(let y=211;y<=367;y+=13)line(310,y,790,y,'#d9edf747',.8);
+    for(let k=0;k<=10;k++){const a=k/10;line(280,192+a*184,310,211+a*156,'#d9edf769',.8);line(820,192+a*184,790,211+a*156,'#d9edf769',.8);}
+    for(let x=280;x<=820;x+=24)line(x,192,310+(x-280)*480/540,211,'#d9edf760',.8);
+    for(const p of [[280,376,280,192],[280,192,820,192],[820,192,820,376]]) {line(...p,'#06131c',11);line(...p,'#e9f5ff',7);line(p[0]-1,p[1],p[2]-1,p[3],'#fff',2);}
+    const shade=ctx.createLinearGradient(0,485,0,650);shade.addColorStop(0,'#00120800');shade.addColorStop(1,'#000d1266');ctx.fillStyle=shade;ctx.fillRect(0,485,1100,165);
+    layer.getContext('2d').drawImage(canvas,0,0); background = layer; cachedLeague=league;
   }
-  function draw(match, fraction = 0) {
-    if (cachedLeague !== match.league || !background) {
-      stadium(match.league);
-      // Cache the static stadium once: no crowd rebuild on every animation frame.
-      background = ctx.getImageData(0, 0, FIELD.width, FIELD.height); cachedLeague = match.league;
-    } else ctx.putImageData(background, 0, 0);
-    const scene = SCENARIOS[match.plan[match.index].scenario];
-    const shot = match.outcome;
-    const t = shot ? Math.min(fraction, 1) * shot.stop : 0;
-    const catchPoint = shot?.type === 'save' && fraction > 0.7 ? shot.contact : null;
-    person(scene.keeper, 369, 1.18, '#ffae4e', true, catchPoint);
-    // The physical wall occupies x ±53, y 345..441 at depth .64.
-    for (const x of [scene.wall - 34, scene.wall, scene.wall + 34]) person(x, 441, 1.2, '#a9cddd');
-    if (match.phase === 'aim') {
-      const { x, y } = match.aim;
-      // A guide to the selected target, not a fake guaranteed trajectory.
-      ctx.setLineDash([6, 12]); line(550, 584, x, y, '#d8ff6950', 2); ctx.setLineDash([]);
-      ctx.strokeStyle = '#d6ff4b'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, 17, 0, Math.PI * 2); ctx.stroke();
-      line(x - 27, y, x - 9, y, '#d6ff4b', 2); line(x + 9, y, x + 27, y, '#d6ff4b', 2);
-      line(x, y - 27, x, y - 9, '#d6ff4b', 2); line(x, y + 9, x, y + 27, '#d6ff4b', 2);
-    }
-    const ball = shot ? pathPoint(shot.end, t) : { x: 550, y: 584, r: 14 };
-    ctx.fillStyle = '#00191670'; ctx.beginPath(); ctx.ellipse(ball.x, 600 - 224 * t, ball.r * 1.3, 4, 0, 0, Math.PI * 2); ctx.fill();
-    const fill = ctx.createRadialGradient(ball.x - ball.r / 3, ball.y - ball.r / 3, 1, ball.x, ball.y, ball.r);
-    fill.addColorStop(0, '#ffffff'); fill.addColorStop(1, '#95aeb4');
-    ctx.fillStyle = fill; ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2); ctx.fill();
-    poly(Array.from({ length: 5 }, (_, i) => [ball.x + Math.cos(i * Math.PI * 2 / 5) * ball.r * .46, ball.y + Math.sin(i * Math.PI * 2 / 5) * ball.r * .46]), '#192d38');
-    if (!shot) person(495, 622, 1.55, '#cfff42');
+  // Jointed athletes: depth, kit shading, planted boots, run-up and diving poses.
+  function athlete(x,y,scale,shirt,{number='',run=0,kick=0,dive=0,angle=0,wall=false,time=0}={}) {
+    ellipse(x,y+2,24*scale,5*scale,'#000a1280');
+    ctx.save();ctx.translate(x,y);ctx.rotate(angle);ctx.scale(scale,scale);
+    const stride=Math.sin(run*Math.PI*4)*12;
+    const hipY=-31, kneeY=-16;
+    line(-7,hipY,-8-stride*.4,kneeY,'#142433',9);
+    line(-8-stride*.4,kneeY,-11-stride,0,'#b0c4c3',7);
+    line(7,hipY,9+stride*.4+kick*19,kneeY-kick*13,'#142433',9);
+    line(9+stride*.4+kick*19,kneeY-kick*13,12+stride+kick*38,-kick*32,'#b0c4c3',7);
+    line(-13-stride,1,-4-stride,2,'#ebfae6',5);
+    line(10+stride+kick*38,-kick*32,19+stride+kick*38,-kick*32,'#fe7349',5);
+    const kit=ctx.createLinearGradient(-16,-68,17,-27);kit.addColorStop(0,shirt);kit.addColorStop(1,'#253e48');
+    polygon([[-15,-64],[14,-64],[12,-32],[-11,-32]],kit);
+    line(-9,-33,10,-33,'#08151e',3);
+    line(-13,-58,wall?-19:-25-stride*.3,wall?-43:-45+dive*12,shirt,8);
+    line(wall?-19:-25-stride*.3,wall?-43:-45+dive*12,wall?-4:-30-dive*12,wall?-38:-33+dive*12,'#c39376',6);
+    line(13,-58,wall?19:25+stride*.3,wall?-43:-45-dive*5,shirt,8);
+    line(wall?19:25+stride*.3,wall?-43:-45-dive*5,wall?4:30+dive*12,wall?-38:-33-dive*6,'#c39376',6);
+    if(dive){ellipse(-30-dive*12,-33+dive*12,6,5,'#efffff');ellipse(30+dive*12,-33-dive*6,6,5,'#efffff');}
+    ctx.fillStyle='#bc9075';ctx.fillRect(-4,-71,8,8);
+    ellipse(0,-77,9,11,'#c79d81');ellipse(-1,-83,9,5,'#152022');
+    if(number){ctx.fillStyle='#f8ffeb';ctx.font='bold 17px system-ui';ctx.textAlign='center';ctx.fillText(number,0,-43);}
+    ctx.restore();
   }
-  return { draw };
+  function football(p,t=0) {
+    const {x,y,r}=p;
+    const fill=ctx.createRadialGradient(x-r*.35,y-r*.45,1,x,y,r);fill.addColorStop(0,'#fff');fill.addColorStop(.65,'#e8f4f5');fill.addColorStop(1,'#7f9da7');
+    ellipse(x,y,r,r,fill);ctx.save();ctx.translate(x,y);ctx.rotate(t*13);
+    for(let j=0;j<6;j++){const a=j*Math.PI/3;const cx=j?Math.cos(a)*r*.75:0,cy=j?Math.sin(a)*r*.75:0;polygon(Array.from({length:5},(_,i)=>[cx+Math.cos(i*Math.PI*2/5)*r*.29,cy+Math.sin(i*Math.PI*2/5)*r*.29]),'#182a37');}ctx.restore();
+  }
+  function draw(match, fraction=0, visual={}) {
+    ctx.setTransform(1,0,0,1,0,0);
+    if(cachedLeague!==match.league||!background)stadium(match.league);
+    const shot=match.outcome, scene=SCENARIOS[match.plan[match.index].scenario];
+    const now=visual.time??0, reduced=visual.reduced??false;
+    const t=shot?clamp(fraction,0,1)*shot.stop:0;
+    const follow=reduced?0:smooth(t)*.14;
+    ctx.save();ctx.translate(550,290);ctx.scale(1+follow,1+follow);ctx.translate(-550,-290);
+    ctx.drawImage(background,0,0);
+    const reach=shot?smooth((fraction-.30)/.70):0;
+    const direction=shot?Math.sign(shot.end.x-scene.keeper):0;
+    const keeperX=scene.keeper+(shot?clamp(shot.end.x-scene.keeper,-100,100)*reach:0);
+    const keeperY=369-(shot?Math.max(0,330-shot.end.y)*reach*.5:0);
+    const sway=reduced||shot?0:Math.sin(now*.002)*2;
+    athlete(keeperX,keeperY+sway,1.14,'#ffb04c',{dive:reach,angle:direction*reach*.75});
+    if(shot?.type==='save'&&fraction>.8){line(keeperX,keeperY-47,shot.contact.x,shot.contact.y,'#f1f8ed',7);ellipse(shot.contact.x,shot.contact.y,9,7,'#eef7e9');}
+    for(const [i,x] of [scene.wall-34,scene.wall,scene.wall+34].entries())athlete(x,441,1.12,'#f0f4fa',{wall:true,number:String(4+i)});
+    if(match.phase==='aim') {
+      const end={x:match.aim.x,y:match.aim.y,spin:match.aim.spin};
+      ctx.setLineDash([3,12]);ctx.strokeStyle='#d8ff777b';ctx.lineWidth=2;ctx.beginPath();
+      for(let i=0;i<=40;i++){const p=pathPoint(end,i/40);i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y);}ctx.stroke();ctx.setLineDash([]);
+      const p=match.aim,pulse=reduced?0:Math.sin(now*.005)*2;
+      ellipse(p.x,p.y,20+pulse,20+pulse,'#d6ff4917');ctx.strokeStyle='#dbff74';ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,16+pulse,0,Math.PI*2);ctx.stroke();
+      line(p.x-27,p.y,p.x-12,p.y,'#efffbd');line(p.x+12,p.y,p.x+27,p.y,'#efffbd');line(p.x,p.y-27,p.x,p.y-12,'#efffbd');line(p.x,p.y+12,p.x,p.y+27,'#efffbd');
+      ellipse(550,594,42,12,'#d6ff493a');
+    }
+    const windup=visual.windup??1;
+    const kick=shot?1:0;
+    athlete(469+Math.min(windup,1)*kick*43,628-kick*9,1.58,'#d9ff4e',{number:'10',run:shot?windup:0,kick:shot?Math.max(0,1-fraction*4)*windup:0});
+    if(shot&&fraction>0&&!reduced){
+      for(let i=8;i>0;i--){const p=pathPoint(shot.end,Math.max(0,t-i*.013));ellipse(p.x,p.y,p.r*.75,p.r*.75,`rgba(212,247,255,${.025*(9-i)})`);}
+    }
+    const p=shot?pathPoint(shot.end,t):{x:550,y:584,r:14};
+    ellipse(p.x,600-224*t,p.r*1.25,3.5,'#000e1aaa');football(p,t);
+    const since=visual.resultAge??9999;
+    if(shot?.goal&&since<950&&!reduced){
+      ctx.strokeStyle=`rgba(217,249,255,${.55*(1-since/950)})`;ctx.lineWidth=2;ctx.beginPath();ctx.ellipse(shot.contact.x,shot.contact.y,12+since*.06,9+since*.035,0,0,Math.PI*2);ctx.stroke();
+    }
+    ctx.restore();
+    if(shot?.goal&&since<1600&&!reduced){
+      for(let i=0;i<44;i++){const seed=i*9.723,age=since/1000;const x=550+Math.sin(seed)*(160+age*370),y=200-Math.cos(seed)*160*age+age*age*170;ctx.save();ctx.translate(x,y);ctx.rotate(seed+age*3);ctx.fillStyle=i%3?'#d6ff4b':'#bdf2ff';ctx.globalAlpha=Math.max(0,1-age/1.6);ctx.fillRect(-3,-7,6,14);ctx.restore();}
+    }
+    const vignette=ctx.createRadialGradient(550,320,210,550,320,640);vignette.addColorStop(0,'#00000000');vignette.addColorStop(1,'#00101855');ctx.fillStyle=vignette;ctx.fillRect(0,0,1100,650);
+  }
+  return {draw};
 }
