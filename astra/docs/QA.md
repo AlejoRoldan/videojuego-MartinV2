@@ -48,3 +48,12 @@ La diversión y la sensación de realismo requieren la valoración del usuario. 
 - El arrastre del balón ahora fija el destino; la ejecución siempre pasa por la barra para evitar dos modelos de potencia contradictorios.
 - Teclado: flechas para apuntar y mantener/soltar Espacio para cargar. El botón acepta Espacio o Enter.
 - La potencia liberada se envía una sola vez al reductor antes de `SHOOT`; los bloqueos de fase existentes impiden doble disparo y doble XP.
+
+## Astra 3.0 α2 · HU-02
+
+- Se reemplazó el desplazamiento lineal del arquero por fases explícitas: listo, lectura, apoyo, vuelo, contacto, caída y recuperación.
+- La animación consume exclusivamente `shot.contact`, `shot.end`, `shot.type` y la posición del escenario; no recalcula ni modifica el resultado.
+- En una atajada, el guante delantero coincide exactamente con el punto físico de contacto. En goles y otros fallos, el alcance visible se limita y no toca el balón.
+- El arquero reacciona desde el inicio del vuelo, carga el apoyo antes de lanzarse y acelera durante el impulso.
+- Se eliminó la línea artificial que unía al arquero con el balón.
+- Con movimiento reducido se muestra una postura final coherente sin secuencia animada.

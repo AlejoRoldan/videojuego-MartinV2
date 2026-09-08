@@ -1,4 +1,4 @@
-# GOL LAB · Astra 3.0 α1
+# GOL LAB · Astra 3.0 α2
 
 Academia de tiros libres para practicar multiplicación y división, con una estética deportiva adolescente, tres canchas, carrera personal y copa local para 2–4 jugadores.
 
@@ -35,6 +35,10 @@ Arrastra el balón hacia el arco para definir el destino. El control de efecto p
 ## Astra 3.0 · HU-01 barra de fuerza
 
 Dirección, altura y efecto preparan el remate. Después el jugador mantiene pulsado el botón para cargar y suelta para fijar la potencia y disparar. Con teclado se mantiene y suelta Espacio sobre la cancha, o Espacio/Enter sobre el botón. El cálculo no decide el gol: una respuesta limpia amplía la zona perfecta, una pista la reduce y un error corregido la hace más exigente. El valor liberado queda guardado en el tiro y es la única potencia usada por la física.
+
+## Astra 3.0 · HU-02 arquero deportivo
+
+El arquero usa una secuencia determinista de preparación, lectura, apoyo, impulso, vuelo, contacto, caída y recuperación. Ya no se traslada linealmente ni conecta sus manos al balón con una línea artificial. En una atajada, el guante delantero termina exactamente en el punto de contacto resuelto por la física; en un gol, su alcance visual queda corto. El movimiento reducido conserva una postura final estática y coherente.
 
 ## Arquitectura
 

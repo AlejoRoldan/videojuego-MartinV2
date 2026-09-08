@@ -1,4 +1,5 @@
 import { FIELD, SCENARIOS, pathPoint, clamp } from './core/physics.mjs';
+import { keeperPose } from './core/keeper.mjs';
 
 /** Presentation uses the exact flight and contact points from the resolver. */
 export function createRenderer(canvas) {
@@ -80,22 +81,42 @@ export function createRenderer(canvas) {
     ellipse(x,y,r,r,fill);ctx.save();ctx.translate(x,y);ctx.rotate(t*13);
     for(let j=0;j<6;j++){const a=j*Math.PI/3;const cx=j?Math.cos(a)*r*.75:0,cy=j?Math.sin(a)*r*.75:0;polygon(Array.from({length:5},(_,i)=>[cx+Math.cos(i*Math.PI*2/5)*r*.29,cy+Math.sin(i*Math.PI*2/5)*r*.29]),'#182a37');}ctx.restore();
   }
+  function goalkeeper(pose) {
+    const {body,hands,feet,angle,phase,direction}=pose;
+    const rotatePoint=(x,y)=>({x:body.x+x*Math.cos(angle)-y*Math.sin(angle),y:body.y+x*Math.sin(angle)+y*Math.cos(angle)});
+    const shoulderLeft=rotatePoint(-13,-17),shoulderRight=rotatePoint(13,-17),hipLeft=rotatePoint(-9,17),hipRight=rotatePoint(9,17);
+    const elbow=(shoulder,hand,bend)=>({x:(shoulder.x+hand.x)/2+direction*bend,y:(shoulder.y+hand.y)/2+8});
+    const knee=(hip,foot,bend)=>({x:(hip.x+foot.x)/2-direction*bend,y:(hip.y+foot.y)/2-3});
+    const shadowWidth=phase==='ready'?28:46;
+    ellipse(body.x,Math.min(378,Math.max(feet.left.y,feet.right.y)+3),shadowWidth,5,'#00081299');
+    const leftKnee=knee(hipLeft,feet.left,phase==='plant'?7:3),rightKnee=knee(hipRight,feet.right,phase==='plant'?7:3);
+    line(hipLeft.x,hipLeft.y,leftKnee.x,leftKnee.y,'#172838',11);line(leftKnee.x,leftKnee.y,feet.left.x,feet.left.y,'#c3d4d3',8);
+    line(hipRight.x,hipRight.y,rightKnee.x,rightKnee.y,'#172838',11);line(rightKnee.x,rightKnee.y,feet.right.x,feet.right.y,'#c3d4d3',8);
+    line(feet.left.x-5,feet.left.y,feet.left.x+8,feet.left.y,'#e8fbf3',6);line(feet.right.x-5,feet.right.y,feet.right.x+8,feet.right.y,'#e8fbf3',6);
+    ctx.save();ctx.translate(body.x,body.y);ctx.rotate(angle);
+    const kit=ctx.createLinearGradient(-19,-29,18,22);kit.addColorStop(0,'#f2a641');kit.addColorStop(.48,'#df762a');kit.addColorStop(1,'#73331d');
+    polygon([[-17,-27],[17,-27],[15,20],[-14,20]],kit);line(-14,19,15,19,'#101b25',4);
+    ctx.fillStyle='#bd8c70';ctx.fillRect(-4,-38,8,9);ellipse(0,-47,9,12,'#c99a7b');ellipse(-1,-54,9,5,'#101b22');
+    ctx.restore();
+    const leftElbow=elbow(shoulderLeft,hands.left,-4),rightElbow=elbow(shoulderRight,hands.right,4);
+    line(shoulderLeft.x,shoulderLeft.y,leftElbow.x,leftElbow.y,'#df762a',10);line(leftElbow.x,leftElbow.y,hands.left.x,hands.left.y,'#c99a7b',7);
+    line(shoulderRight.x,shoulderRight.y,rightElbow.x,rightElbow.y,'#f0a13d',10);line(rightElbow.x,rightElbow.y,hands.right.x,hands.right.y,'#c99a7b',7);
+    ellipse(hands.left.x,hands.left.y,8,6,'#efffff');ellipse(hands.right.x,hands.right.y,8,6,'#efffff');
+    line(hands.left.x-5,hands.left.y,hands.left.x+5,hands.left.y,'#7bb7c1',1.5);line(hands.right.x-5,hands.right.y,hands.right.x+5,hands.right.y,'#7bb7c1',1.5);
+  }
   function draw(match, fraction=0, visual={}) {
     ctx.setTransform(1,0,0,1,0,0);
     if(cachedLeague!==match.league||!background)stadium(match.league);
     const shot=match.outcome, scene=SCENARIOS[match.plan[match.index].scenario];
     const now=visual.time??0, reduced=visual.reduced??false;
+    const resultAge=visual.resultAge??(match.phase==='result'?0:9999);
     const t=shot?clamp(fraction,0,1)*shot.stop:0;
     const follow=reduced?0:smooth(t)*.14;
     ctx.save();ctx.translate(550,290);ctx.scale(1+follow,1+follow);ctx.translate(-550,-290);
     ctx.drawImage(background,0,0);
-    const reach=shot?smooth((fraction-.30)/.70):0;
-    const direction=shot?Math.sign(shot.end.x-scene.keeper):0;
-    const keeperX=scene.keeper+(shot?clamp(shot.end.x-scene.keeper,-100,100)*reach:0);
-    const keeperY=369-(shot?Math.max(0,330-shot.end.y)*reach*.5:0);
-    const sway=reduced||shot?0:Math.sin(now*.002)*2;
-    athlete(keeperX,keeperY+sway,1.14,'#ffb04c',{dive:reach,angle:direction*reach*.75});
-    if(shot?.type==='save'&&fraction>.8){line(keeperX,keeperY-47,shot.contact.x,shot.contact.y,'#f1f8ed',7);ellipse(shot.contact.x,shot.contact.y,9,7,'#eef7e9');}
+    const keeper=keeperPose(scene,shot,fraction,{resultAge,reduced,time:now});
+    goalkeeper(keeper);
+    if(shot?.type==='save'&&fraction>.82&&resultAge<180){ellipse(shot.contact.x,shot.contact.y,11,8,'#efffff55');}
     for(const [i,x] of [scene.wall-34,scene.wall,scene.wall+34].entries())athlete(x,441,1.12,'#f0f4fa',{wall:true,number:String(4+i)});
     if(match.phase==='aim') {
       const end={x:match.aim.x,y:match.aim.y,spin:match.aim.spin};
@@ -114,7 +135,7 @@ export function createRenderer(canvas) {
     }
     const p=shot?pathPoint(shot.end,t):{x:550,y:584,r:14};
     ellipse(p.x,600-224*t,p.r*1.25,3.5,'#000e1aaa');football(p,t);
-    const since=visual.resultAge??9999;
+    const since=resultAge;
     if(shot?.goal&&since<950&&!reduced){
       ctx.strokeStyle=`rgba(217,249,255,${.55*(1-since/950)})`;ctx.lineWidth=2;ctx.beginPath();ctx.ellipse(shot.contact.x,shot.contact.y,12+since*.06,9+since*.035,0,0,Math.PI*2);ctx.stroke();
     }
