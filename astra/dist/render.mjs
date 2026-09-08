@@ -1,5 +1,6 @@
-import { FIELD, SCENARIOS, pathPoint, clamp } from './core/physics.mjs';
+import { FIELD, pathPoint, clamp } from './core/physics.mjs';
 import { keeperPose } from './core/keeper.mjs';
+import { scenarioForMatch } from './core/scenarios.mjs';
 
 /** Presentation uses the exact flight and contact points from the resolver. */
 export function createRenderer(canvas) {
@@ -107,7 +108,7 @@ export function createRenderer(canvas) {
   function draw(match, fraction=0, visual={}) {
     ctx.setTransform(1,0,0,1,0,0);
     if(cachedLeague!==match.league||!background)stadium(match.league);
-    const shot=match.outcome, scene=SCENARIOS[match.plan[match.index].scenario];
+    const shot=match.outcome, scene=scenarioForMatch(match);
     const now=visual.time??0, reduced=visual.reduced??false;
     const resultAge=visual.resultAge??(match.phase==='result'?0:9999);
     const t=shot?clamp(fraction,0,1)*shot.stop:0;

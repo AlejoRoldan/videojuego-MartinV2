@@ -40,10 +40,15 @@ Dirección, altura y efecto preparan el remate. Después el jugador mantiene pul
 
 El arquero usa una secuencia determinista de preparación, lectura, apoyo, impulso, vuelo, contacto, caída y recuperación. Ya no se traslada linealmente ni conecta sus manos al balón con una línea artificial. En una atajada, el guante delantero termina exactamente en el punto de contacto resuelto por la física; en un gol, su alcance visual queda corto. El movimiento reducido conserva una postura final estática y coherente.
 
+## Astra 3.0 · HU-03 configuraciones de defensa
+
+Cada jugada anuncia una de tres configuraciones tácticas: barrera izquierda con arquero centrado, barrera derecha con arquero a la izquierda, o barrera central con arquero a la derecha. La explicación accesible indica ambas posiciones y ofrece una lectura breve antes de apuntar. Al rematar se guarda una instantánea inmutable de la configuración; física, animación y mensaje consumen esa misma fuente aunque el plan cambie después.
+
 ## Arquitectura
 
 - `dist/core/math.mjs`: operaciones, distractores, pistas y planes reproducibles.
 - `dist/core/physics.mjs`: trayectoria, geometría y resultado único del tiro.
+- `dist/core/scenarios.mjs`: configuraciones defensivas, texto táctico e instantáneas inmutables.
 - `dist/core/game.mjs`: máquina de estados pura, puntuación y copa.
 - `dist/core/storage.mjs`: validación, migración, reconstrucción de sesión y escritura del progreso.
 - `dist/render.mjs`: cancha Canvas; geometría compartida con la simulación y fondo cacheado.

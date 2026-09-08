@@ -1,9 +1,7 @@
+import { SCENARIOS, scenarioAt, snapshotScenario } from './scenarios.mjs';
+export { SCENARIOS } from './scenarios.mjs';
+
 export const FIELD = Object.freeze({ width: 1100, height: 650, left: 280, right: 820, top: 192, bottom: 376, radius: 7, wallDepth: 0.64 });
-export const SCENARIOS = Object.freeze([
-  Object.freeze({ name: 'Barrera a la izquierda', keeper: 550, wall: 470 }),
-  Object.freeze({ name: 'Barrera a la derecha', keeper: 430, wall: 635 }),
-  Object.freeze({ name: 'Barrera en el centro', keeper: 680, wall: 550 }),
-]);
 export const DEFAULT_AIM = Object.freeze({ x: 550, y: 300, power: 50, spin: 0 });
 export const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 export function normalizeAim(aim) {
@@ -17,8 +15,7 @@ export function pathPoint(end, t) {
 }
 export function resolveShot(input, scenarioIndex) {
   const aim = normalizeAim(input);
-  const scene = SCENARIOS[scenarioIndex];
-  if (!scene) throw new RangeError('Invalid scenario');
+  const scene = scenarioAt(scenarioIndex);
   const end = { x: aim.x, spin: aim.spin, y: aim.y + (aim.power < 60 ? (60 - aim.power) * 4 : aim.power > 85 ? -(aim.power - 85) * 4 : 0) };
   const point = pathPoint(end, FIELD.wallDepth);
   let type = 'goal', message = 'Encontraste un espacio libre. ¡Buena definición!', t = 1;
@@ -31,5 +28,5 @@ export function resolveShot(input, scenarioIndex) {
     type = 'save'; message = 'El portero llegó al balón. Busca una esquina más alejada.';
   }
   // Whole ball must fit through the opening; no hidden random miss chance.
-  return Object.freeze({ type, goal: type === 'goal', message, end: Object.freeze(end), stop: t, contact: Object.freeze(pathPoint(end, t)), scenario: scenarioIndex });
+  return Object.freeze({ type, goal: type === 'goal', message, end: Object.freeze(end), stop: t, contact: Object.freeze(pathPoint(end, t)), scenario: scenarioIndex, setup: snapshotScenario(scenarioIndex) });
 }

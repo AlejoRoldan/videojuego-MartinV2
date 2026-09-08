@@ -1,6 +1,7 @@
 import { LEAGUES, MODES, hint, label } from './core/math.mjs';
 import { createMatch, reduceMatch, summary, currentQuestion, createCup, cupRanking } from './core/game.mjs';
-import { FIELD, SCENARIOS, insideGoal } from './core/physics.mjs';
+import { FIELD, insideGoal } from './core/physics.mjs';
+import { describeScenario, scenarioForMatch } from './core/scenarios.mjs';
 import { ProfileStore, STORAGE_KEY, recordPractice } from './core/storage.mjs';
 import { createRenderer } from './render.mjs';
 import { shotFromDrag } from './core/gesture.mjs';
@@ -130,7 +131,7 @@ function stat(value, description) {
 }
 function render(aimOnly = false) {
   const m = active();
-  const scene = SCENARIOS[m.plan[m.index].scenario];
+  const scene = scenarioForMatch(m);
   if (aimOnly) { renderAim(m); renderer.draw(m); return; }
   document.body.dataset.phase = m.phase;
   $('playerName').textContent = cup ? cup.aliases[cup.turn] || 'Copa con amigos' : 'Tu carrera';
@@ -147,7 +148,7 @@ function render(aimOnly = false) {
   }));
   $('streak').textContent = `Racha de cálculo: ${m.streak}`;
   $('best').textContent = cup ? 'Mismas jugadas para todos' : `Récord: ${state.profile.best} goles`;
-  $('sceneDescription').textContent = `${scene.name}. Portero ${scene.keeper < 500 ? 'a la izquierda' : scene.keeper > 600 ? 'a la derecha' : 'en el centro'}. Busca un hueco o supera la barrera por arriba.`;
+  $('sceneDescription').textContent = describeScenario(scene);
   const phaseTitle = { question: 'PREPARA LA JUGADA', aim: 'APUNTA Y DISPARA', flight: 'BALÓN EN JUEGO', result: 'REVISA TU JUGADA', end: 'FINAL DEL PARTIDO' };
   $('phaseTag').textContent = m.index === 4 && m.phase === 'aim' ? 'ÚLTIMO TIRO · HAZLO CONTAR' : phaseTitle[m.phase];
   $('gestureHint').hidden = m.phase !== 'aim';

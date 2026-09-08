@@ -57,3 +57,11 @@ La diversión y la sensación de realismo requieren la valoración del usuario. 
 - El arquero reacciona desde el inicio del vuelo, carga el apoyo antes de lanzarse y acelera durante el impulso.
 - Se eliminó la línea artificial que unía al arquero con el balón.
 - Con movimiento reducido se muestra una postura final coherente sin secuencia animada.
+
+## Astra 3.0 α3 · HU-03
+
+- Hay exactamente tres configuraciones defensivas identificables, con posiciones explícitas de arquero y barrera.
+- La configuración y una recomendación táctica están disponibles antes de disparar mediante `sceneDescription`; la cancha representa las mismas coordenadas.
+- `SHOOT` incorpora una instantánea inmutable de la configuración al resultado. Durante vuelo y resultado, el render consume esa instantánea y no vuelve a resolver el escenario desde el plan.
+- La mira parte del centro y vuelve al centro al avanzar de tiro.
+- Se prueban las tres configuraciones, la rotación reproducible, la congelación durante la resolución y que ninguna rotación de valores iniciales produzca cinco goles garantizados.
