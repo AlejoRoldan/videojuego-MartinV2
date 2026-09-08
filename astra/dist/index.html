@@ -20,11 +20,11 @@
   <section class="heading"><div><span class="eyebrow">TU CANCHA. TU SIGUIENTE NIVEL.</span><h1>El gol empieza en tu cabeza.</h1></div><div class="player"><span class="avatar">G</span><div><b id="playerName">Tu carrera</b><small id="rank">Cantera · Nivel 1</small></div><strong id="xp">0 XP</strong></div></section>
   <div class="toolbar"><button id="career" class="tab active">Entrenar</button><button id="cup" class="tab">Copa con amigos</button><button id="practice" class="tab">Mi práctica</button><button id="share" class="tab">Compartir enlace</button></div>
   <p id="storageNotice" class="notice" role="status" hidden></p>
-  <section id="intro" class="intro" hidden aria-label="Ayuda del primer tiro"><div><b>Calcula. Desliza. Gol.</b><p>Resuelve sin reloj. Después arrastra el balón al arco, suelta y busca el gol.</p></div><button id="dismissHelp" class="tab">Entendido</button></section>
+  <section id="intro" class="intro" hidden aria-label="Ayuda del primer tiro"><div><b>Calcula. Apunta. Remata.</b><p>Resuelve sin reloj, define el destino y mantén pulsado para cargar la fuerza.</p></div><button id="dismissHelp" class="tab">Entendido</button></section>
   <div class="layout" id="playSurface">
     <section class="arena" aria-label="Cancha y marcador">
       <div class="scoreboard"><div><span id="stadium">CANCHA DE BARRIO</span><strong id="leagueTitle">La cantera</strong></div><div class="score"><b id="goals">0</b><span>GOLES</span></div><div class="shots"><span id="shotLabel">TIRO 1 DE 5</span><div id="dots" aria-label="Resultado de los tiros"></div></div></div>
-      <div class="pitch"><canvas id="game" width="1100" height="650" tabindex="0" aria-label="Cancha. Arrastra desde el balón hacia el arco y suelta para rematar. También puedes apuntar con las flechas y disparar con espacio." aria-describedby="sceneDescription"></canvas><div class="pitch-tag"><span id="phaseTag">PREPARA LA JUGADA</span></div><div id="gestureHint" class="gesture-hint">ARRASTRA EL BALÓN · SUELTA PARA REMATAR</div><div id="shotStyle" class="shot-style" aria-live="polite"></div><div id="celebration" aria-hidden="true"></div><div class="pitch-caption">GOL LAB <span>22 m · Tiro libre</span></div></div>
+      <div class="pitch"><canvas id="game" width="1100" height="650" tabindex="0" aria-label="Cancha. Arrastra desde el balón hacia el arco para apuntar. También puedes usar las flechas. Mantén y suelta espacio para cargar y rematar." aria-describedby="sceneDescription"></canvas><div class="pitch-tag"><span id="phaseTag">PREPARA LA JUGADA</span></div><div id="gestureHint" class="gesture-hint">ARRASTRA EL BALÓN PARA APUNTAR</div><div id="shotStyle" class="shot-style" aria-live="polite"></div><div id="celebration" aria-hidden="true"></div><div class="pitch-caption">GOL LAB <span>22 m · Tiro libre</span></div></div>
       <div class="arena-footer"><span id="streak">Racha: 0</span><span id="best">Récord: 0 goles</span></div>
       <p id="sceneDescription" class="scene-description"></p>
     </section>
@@ -35,12 +35,18 @@
         <p class="subtle">Sin reloj. Encuentra tu ritmo.</p><div class="equation" id="equation"></div><div id="answers" class="answers" role="group" aria-label="Respuestas"></div><button id="hint" class="text-button">Dame una pista</button>
       </section>
       <section id="aimPanel" hidden>
-        <p class="subtle aim-intro">Arrastra el balón hacia un rincón y suelta. O ajusta el tiro con los controles.</p>
+        <p class="subtle aim-intro">Elige el destino y el efecto. Después mantén pulsado para cargar y suelta para rematar.</p>
         <label for="aimX">Dirección <output id="aimValue" for="aimX">Centro</output></label><input id="aimX" type="range" min="280" max="820" value="550" step="5">
         <label for="aimY">Altura <output id="heightValue" for="aimY">Media</output></label><input id="aimY" type="range" min="192" max="376" value="300" step="1">
-        <label for="power">Potencia <output id="powerValue" for="power">50%</output></label><input id="power" type="range" min="30" max="100" value="50">
         <label for="spin">Efecto <output id="spinValue" for="spin">Recto</output></label><input id="spin" type="range" min="-1" max="1" step="0.1" value="0">
-        <p class="tip" id="powerTip">Zona útil: 60–85%. Menos potencia: más bajo. Más de 85%: más alto.</p><button id="shoot" class="primary">DISPARAR ↗</button>
+        <div id="powerControl" class="power-control">
+          <div class="power-heading"><span>Fuerza del remate</span><output id="powerValue">50%</output></div>
+          <div id="powerMeter" class="power-meter" role="meter" aria-label="Fuerza del remate" aria-valuemin="30" aria-valuemax="100" aria-valuenow="50" aria-describedby="powerTip">
+            <span class="power-track"><span id="perfectZone" class="perfect-zone"></span><span id="powerFill" class="power-fill"></span><span id="powerNeedle" class="power-needle"></span></span>
+          </div>
+          <p class="tip" id="powerTip">Mantén pulsado y suelta dentro de la zona verde. Tu cálculo define su amplitud.</p>
+        </div>
+        <button id="shoot" class="primary charge-button">MANTÉN PARA CARGAR</button>
       </section>
       <section id="flightPanel" hidden><p class="subtle">Balón en juego…</p></section>
       <section id="resultPanel" hidden><h3 id="resultTitle" tabindex="-1"></h3><p id="resultText"></p><div id="summaryStats"></div><ul id="reviewList"></ul><button id="next" class="primary">SIGUIENTE TIRO →</button><button id="review" class="tab" hidden>Repasar estas operaciones</button></section>
@@ -49,7 +55,7 @@
     </aside>
   </div>
   <section class="journey" id="journey"><div class="journey-head"><div><span class="eyebrow">DE LA CANCHA AL ESTADIO</span><h2>Tu carrera empieza aquí</h2></div><p id="progressText"></p></div><div id="leagues" class="leagues"></div></section>
-  <footer>Sesiones cortas. Grandes jugadas.<span>Progreso en este navegador · Astra 2.1</span></footer>
+  <footer>Sesiones cortas. Grandes jugadas.<span>Progreso en este navegador · Astra 3.0 α1</span></footer>
 </main>
 <dialog id="modal" aria-labelledby="modalTitle"><div class="modal-head"><h2 id="modalTitle"></h2><button id="closeModal" class="tab" aria-label="Cerrar ventana">Cerrar</button></div><div id="modalBody"></div><div id="modalActions"></div></dialog>
 <noscript>Activa JavaScript para jugar a GOL LAB.</noscript>

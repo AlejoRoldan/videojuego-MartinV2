@@ -40,3 +40,11 @@ Se compararon las implementaciones V9, V10 y V12 disponibles en el proyecto: cá
 - 37 pruebas automatizadas: se agregaron validación de gestos, efecto sobre la barrera, compatibilidad de partidas antiguas y recuperación de tiros con efecto.
 
 La diversión y la sensación de realismo requieren la valoración del usuario. Esta entrega no se presenta como validada por adolescentes ni como simulación 3D física completa. El acceso continúa privado.
+
+## Astra 3.0 α1 · HU-01
+
+- Se reemplazó el slider de potencia por una barra activa: mantener para cargar y soltar para rematar.
+- La zona perfecta es más amplia después de un cálculo limpio, intermedia con pista y estrecha después de corregir un error.
+- El arrastre del balón ahora fija el destino; la ejecución siempre pasa por la barra para evitar dos modelos de potencia contradictorios.
+- Teclado: flechas para apuntar y mantener/soltar Espacio para cargar. El botón acepta Espacio o Enter.
+- La potencia liberada se envía una sola vez al reductor antes de `SHOOT`; los bloqueos de fase existentes impiden doble disparo y doble XP.

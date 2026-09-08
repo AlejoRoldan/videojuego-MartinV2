@@ -4,6 +4,7 @@ import { FIELD, SCENARIOS, insideGoal } from './core/physics.mjs';
 import { ProfileStore, STORAGE_KEY, recordPractice } from './core/storage.mjs';
 import { createRenderer } from './render.mjs';
 import { shotFromDrag } from './core/gesture.mjs';
+import { CHARGE_MIN, CHARGE_MAX, chargePower, perfectWindow, powerGrade } from './core/power.mjs';
 
 const $ = id => document.getElementById(id);
 const seed = () => crypto.getRandomValues(new Uint32Array(1))[0];
@@ -22,7 +23,7 @@ const repository = new ProfileStore(storage);
 let state = repository.load();
 state.match ||= createMatch({ seed: seed() });
 let cup = null, cupMatch = null, blocked = false, frame = 0, sound = false, audioContext;
-let drag = null, visualFrame = 0, lastPaint = 0, resultAt = -10000;
+let drag = null, charge = null, visualFrame = 0, lastPaint = 0, resultAt = -10000;
 let dialogCancel = null;
 let dialogPurpose = '', feedback = '', lastPhase = '', restoreFocus = null;
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
@@ -203,13 +204,60 @@ function render(aimOnly = false) {
   if (lastPhase !== m.phase) lastPhase = m.phase;
 }
 function renderAim(m) {
-  $('aimX').value = m.aim.x; $('aimY').value = m.aim.y; $('power').value = m.aim.power;
+  $('aimX').value = m.aim.x; $('aimY').value = m.aim.y;
   $('aimValue').textContent = m.aim.x < 490 ? 'Izquierda' : m.aim.x > 610 ? 'Derecha' : 'Centro';
   $('heightValue').textContent = m.aim.y < 250 ? 'Alta' : m.aim.y > 325 ? 'Baja' : 'Media';
-  $('powerValue').textContent = `${m.aim.power}%`;
   $('spin').value = m.aim.spin || 0;
   $('spinValue').textContent = !m.aim.spin ? 'Recto' : m.aim.spin < 0 ? 'Izquierda' : 'Derecha';
-  for (const id of ['aimX', 'aimY', 'power', 'spin']) $(id).disabled = blocked || m.phase !== 'aim';
+  for (const id of ['aimX', 'aimY', 'spin']) $(id).disabled = blocked || m.phase !== 'aim';
+  renderPower(m.aim.power, m);
+}
+function meterPosition(power) { return (power - CHARGE_MIN) / (CHARGE_MAX - CHARGE_MIN) * 100; }
+function renderPower(power, match, charging = false) {
+  const window = perfectWindow(match), grade = powerGrade(power, window);
+  const position = meterPosition(power), start = meterPosition(window.min), end = meterPosition(window.max);
+  $('powerValue').textContent = `${power}%`;
+  $('powerFill').style.width = `${position}%`;
+  $('powerNeedle').style.left = `${position}%`;
+  $('perfectZone').style.left = `${start}%`;
+  $('perfectZone').style.width = `${end - start}%`;
+  $('powerMeter').setAttribute('aria-valuenow', String(power));
+  $('powerMeter').setAttribute('aria-valuetext', `${power} por ciento, ${grade === 'perfect' ? 'zona perfecta' : grade === 'low' ? 'potencia baja' : grade === 'over' ? 'sobrepotencia' : 'potencia controlada'}`);
+  $('powerControl').dataset.grade = grade;
+  $('shoot').textContent = charging ? `SUELTA · ${power}%` : 'MANTÉN PARA CARGAR';
+  $('shoot').classList.toggle('charging', charging);
+}
+function cancelCharge() {
+  if (!charge) return;
+  cancelAnimationFrame(charge.frame);
+  charge = null;
+  $('shoot').classList.remove('charging');
+  if (active().phase === 'aim') renderPower(active().aim.power, active());
+}
+function startCharge(source, pointerId = null) {
+  const m = active();
+  if (charge || blocked || m.phase !== 'aim') return false;
+  charge = { source, pointerId, startedAt: performance.now(), value: CHARGE_MIN, frame: 0 };
+  const tick = now => {
+    if (!charge || active().phase !== 'aim' || blocked) { cancelCharge(); return; }
+    charge.value = chargePower(now - charge.startedAt);
+    renderPower(charge.value, active(), true);
+    charge.frame = requestAnimationFrame(tick);
+  };
+  renderPower(CHARGE_MIN, m, true);
+  charge.frame = requestAnimationFrame(tick);
+  return true;
+}
+function releaseCharge(source, pointerId = null) {
+  if (!charge || charge.source !== source || (charge.pointerId !== null && charge.pointerId !== pointerId)) return false;
+  const value = charge.value;
+  cancelAnimationFrame(charge.frame);
+  charge = null;
+  const m = active(), grade = powerGrade(value, perfectWindow(m));
+  dispatch({ type: 'AIM', value: { ...m.aim, power: value } });
+  feedback = grade === 'perfect' ? `Potencia perfecta: ${value}%.` : grade === 'low' ? `Potencia baja: ${value}%.` : grade === 'over' ? `Sobrepotencia: ${value}%.` : `Potencia controlada: ${value}%.`;
+  dispatch({ type: 'SHOOT' });
+  return true;
 }
 function openDialog(title, purpose = 'normal') {
   if ($('modal').open) $('modal').close();
@@ -322,13 +370,29 @@ async function share() {
 }
 $('help').addEventListener('click', () => {
   openDialog('Resuelve, apunta y dispara');
-  for (const text of ['1. Resuelve la operación. Puedes pensar sin reloj y pedir una pista.', '2. Arrastra desde el balón hasta un rincón del arco y suelta para rematar. También puedes tocar el arco y usar Disparar.', '3. Usa Efecto para rodear la barrera. La curva cambia el recorrido, pero termina en tu objetivo. Con teclado: flechas para apuntar y espacio para rematar.', '4. Mira la causa del resultado. Al terminar puedes repasar o pedir revancha.']) $('modalBody').append(node('p', text));
+  for (const text of ['1. Resuelve la operación. Puedes pensar sin reloj y pedir una pista.', '2. Arrastra desde el balón hasta un rincón o toca el arco para definir el destino.', '3. Ajusta altura y efecto. Después mantén pulsado Disparar y suelta dentro de la zona verde. Con teclado: flechas para apuntar y mantener/soltar espacio para cargar.', '4. Tu cálculo amplía la zona perfecta. Mira la causa del resultado y vuelve a intentarlo.']) $('modalBody').append(node('p', text));
   $('modalActions').append(button('Entendido', closeDialog, 'primary'));
 });
 $('dismissHelp').addEventListener('click', () => { persist({ ...state, profile: { ...state.profile, tutorialSeen: true } }); render(); });
 $('sound').addEventListener('click', () => { sound = !sound; $('sound').textContent = `Sonido: ${sound ? 'ON' : 'OFF'}`; $('sound').setAttribute('aria-pressed', String(sound)); tone(500); });
 $('hint').addEventListener('click', () => dispatch({ type: 'HINT' }));
-$('shoot').addEventListener('click', () => dispatch({ type: 'SHOOT' }));
+$('shoot').addEventListener('pointerdown', event => {
+  if (!event.isPrimary || event.button !== 0) return;
+  event.preventDefault();
+  if (startCharge('button', event.pointerId)) $('shoot').setPointerCapture(event.pointerId);
+});
+$('shoot').addEventListener('pointerup', event => { event.preventDefault(); releaseCharge('button', event.pointerId); });
+$('shoot').addEventListener('pointercancel', cancelCharge);
+$('shoot').addEventListener('lostpointercapture', () => { if (charge?.source === 'button') cancelCharge(); });
+$('shoot').addEventListener('keydown', event => {
+  if (![' ', 'Enter'].includes(event.key) || event.repeat) return;
+  event.preventDefault(); startCharge('button-key');
+});
+$('shoot').addEventListener('keyup', event => {
+  if (![' ', 'Enter'].includes(event.key)) return;
+  event.preventDefault(); releaseCharge('button-key');
+});
+$('shoot').addEventListener('click', event => event.preventDefault());
 $('next').addEventListener('click', () => {
   if (active().phase !== 'end') dispatch({ type: 'NEXT' });
   else if (cup) finishCupTurn();
@@ -348,7 +412,7 @@ $('closeModal').addEventListener('click', () => {
 });
 $('modal').addEventListener('cancel', e => { e.preventDefault(); $('closeModal').click(); });
 for (const b of document.querySelectorAll('[data-mode]')) b.addEventListener('click', () => { if (b.dataset.mode !== state.match.mode) changeTraining(state.match.league, b.dataset.mode); });
-for (const id of ['aimX', 'aimY', 'power', 'spin']) $(id).addEventListener('input', () => dispatch({ type: 'AIM', value: { x: Number($('aimX').value), y: Number($('aimY').value), power: Number($('power').value), spin: Number($('spin').value) } }));
+for (const id of ['aimX', 'aimY', 'spin']) $(id).addEventListener('input', () => dispatch({ type: 'AIM', value: { x: Number($('aimX').value), y: Number($('aimY').value), power: active().aim.power, spin: Number($('spin').value) } }));
 function pointerPoint(event) {
   const r=$('game').getBoundingClientRect();
   return {x:(event.clientX-r.left)/r.width*FIELD.width,y:(event.clientY-r.top)/r.height*FIELD.height};
@@ -358,34 +422,38 @@ $('game').addEventListener('pointerdown', event => {
   const point=pointerPoint(event);
   if (Math.hypot(point.x-550,point.y-584)<110) {
     event.preventDefault();drag={start:point,end:point,time:performance.now(),id:event.pointerId};
-    $('game').setPointerCapture(event.pointerId);$('gestureHint').textContent='LLEVA EL BALÓN A UN RINCÓN Y SUELTA';
+    $('game').setPointerCapture(event.pointerId);$('gestureHint').textContent='SUELTA PARA FIJAR LA DIRECCIÓN';
   } else if (insideGoal(point.x,point.y)) dispatch({type:'AIM',value:{...active().aim,x:Math.round(point.x),y:Math.round(point.y)}});
 });
 $('game').addEventListener('pointermove',event=>{
   if (!drag || drag.id!==event.pointerId || active().phase!=='aim') return;
   drag.end=pointerPoint(event);
   const aim=shotFromDrag(drag.start,drag.end,Math.max(60,performance.now()-drag.time),active().aim.spin||0);
-  if(aim)dispatch({type:'AIM',value:aim});
+  if(aim)dispatch({type:'AIM',value:{...aim,power:active().aim.power}});
 });
-function cancelDrag(){drag=null;$('gestureHint').textContent='ARRASTRA EL BALÓN · SUELTA PARA REMATAR';}
+function cancelDrag(){drag=null;$('gestureHint').textContent='ARRASTRA EL BALÓN PARA APUNTAR';}
 $('game').addEventListener('pointerup',event=>{
   if(!drag||drag.id!==event.pointerId)return;
   const aim=shotFromDrag(drag.start,pointerPoint(event),performance.now()-drag.time,active().aim.spin||0);
   cancelDrag();
-  if(aim){dispatch({type:'AIM',value:aim});dispatch({type:'SHOOT'});}
+  if(aim){dispatch({type:'AIM',value:{...aim,power:active().aim.power}});feedback='Dirección lista. Mantén pulsado para cargar el remate.';render();}
 });
 $('game').addEventListener('pointercancel',cancelDrag);
 $('game').addEventListener('lostpointercapture',cancelDrag);
 $('game').addEventListener('keydown', event => {
   if (active().phase !== 'aim' || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ' '].includes(event.key)) return;
   event.preventDefault();
-  if (event.key === ' ') { dispatch({ type: 'SHOOT' }); return; }
+  if (event.key === ' ') { if (!event.repeat) startCharge('canvas-key'); return; }
   const a = { ...active().aim };
   if (event.key === 'ArrowLeft') a.x -= 15;
   if (event.key === 'ArrowRight') a.x += 15;
   if (event.key === 'ArrowUp') a.y -= 10;
   if (event.key === 'ArrowDown') a.y += 10;
   dispatch({ type: 'AIM', value: a });
+});
+$('game').addEventListener('keyup', event => {
+  if (event.key !== ' ') return;
+  event.preventDefault(); releaseCharge('canvas-key');
 });
 window.addEventListener('storage', event => { if (event.key === STORAGE_KEY && event.newValue !== event.oldValue) conflict(); });
 window.addEventListener('beforeunload', event => { if (cup && cup.phase !== 'end') { event.preventDefault(); event.returnValue = ''; } });
