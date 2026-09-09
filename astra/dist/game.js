@@ -1,4 +1,4 @@
-import { LEAGUES, MODES, hint, label } from './core/math.mjs';
+import { LEAGUES, MODES, label } from './core/math.mjs';
 import { createMatch, reduceMatch, summary, currentQuestion, createCup, cupRanking } from './core/game.mjs';
 import { FIELD, insideGoal } from './core/physics.mjs';
 import { describeScenario, scenarioForMatch } from './core/scenarios.mjs';
@@ -6,6 +6,7 @@ import { ProfileStore, STORAGE_KEY, recordPractice } from './core/storage.mjs';
 import { createRenderer } from './render.mjs';
 import { shotFromDrag } from './core/gesture.mjs';
 import { CHARGE_MIN, CHARGE_MAX, chargePower, perfectWindow, powerGrade } from './core/power.mjs';
+import { correctionFeedback, errorFeedback, hintFeedback, restoredLearningFeedback } from './core/learningFeedback.mjs';
 
 const $ = id => document.getElementById(id);
 const seed = () => crypto.getRandomValues(new Uint32Array(1))[0];
@@ -30,6 +31,7 @@ let dialogPurpose = '', feedback = '', lastPhase = '', restoreFocus = null;
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const renderer = createRenderer($('game'));
 const active = () => cupMatch || state.match;
+feedback = restoredLearningFeedback(active());
 
 function notice(text) { $('storageNotice').textContent = text; $('storageNotice').hidden = !text; }
 function conflict() {
@@ -71,9 +73,9 @@ function dispatch(event) {
     if (!persist({ ...state, profile, match: update.match })) return;
   }
   const m = active(), q = currentQuestion(m);
-  if (event.type === 'HINT') feedback = hint(q);
+  if (event.type === 'HINT') feedback = hintFeedback(q);
   else if (event.type === 'ANSWER') {
-    feedback = m.phase === 'question' ? `Casi. ${hint(q)}` : `¡Correcto! ${label(q)} = ${q.answer}.${update.reward ? ` +${update.reward} XP.` : ''}`;
+    feedback = m.phase === 'question' ? errorFeedback(q, m.wrong.length) : correctionFeedback(q, update.reward, update.record.clean);
     tone(m.phase === 'question' ? 180 : 580);
   } else if (event.type === 'NEXT') feedback = '';
   else if (event.type === 'SHOOT') { feedback = 'Balón en juego…'; stadiumSound('kick'); }

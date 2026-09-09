@@ -65,3 +65,12 @@ La diversión y la sensación de realismo requieren la valoración del usuario. 
 - `SHOOT` incorpora una instantánea inmutable de la configuración al resultado. Durante vuelo y resultado, el render consume esa instantánea y no vuelve a resolver el escenario desde el plan.
 - La mira parte del centro y vuelve al centro al avanzar de tiro.
 - Se prueban las tres configuraciones, la rotación reproducible, la congelación durante la resolución y que ninguna rotación de valores iniciales produzca cinco goles garantizados.
+
+## Astra 3.0 α4 · HU-04
+
+- Un error conserva pregunta y turno, desactiva solo la respuesta usada y entrega una estrategia acorde al dominio sin revelar automáticamente la solución.
+- Multiplicación usa grupos o descomposición; división usa relación inversa y reparto.
+- Dos errores distintos y su corrección generan una sola recompensa y un único registro de práctica para la pregunta.
+- Después de corregir se muestra la igualdad completa y se habilita el tiro.
+- Al recargar durante una pista o una corrección, el feedback se reconstruye desde `helped` y `wrong`; no se confía en texto persistido.
+- El cierre mantiene separados goles, aciertos sin ayuda, resoluciones con ayuda y hasta tres operaciones para practicar.

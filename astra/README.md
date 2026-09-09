@@ -1,4 +1,4 @@
-# GOL LAB · Astra 3.0 α2
+# GOL LAB · Astra 3.0 α4
 
 Academia de tiros libres para practicar multiplicación y división, con una estética deportiva adolescente, tres canchas, carrera personal y copa local para 2–4 jugadores.
 
@@ -44,9 +44,14 @@ El arquero usa una secuencia determinista de preparación, lectura, apoyo, impul
 
 Cada jugada anuncia una de tres configuraciones tácticas: barrera izquierda con arquero centrado, barrera derecha con arquero a la izquierda, o barrera central con arquero a la derecha. La explicación accesible indica ambas posiciones y ofrece una lectura breve antes de apuntar. Al rematar se guarda una instantánea inmutable de la configuración; física, animación y mensaje consumen esa misma fuente aunque el plan cambie después.
 
+## Astra 3.0 · HU-04 corrección con ayuda útil
+
+Una respuesta incorrecta conserva la pregunta y el turno, desactiva únicamente esa opción y ofrece una estrategia breve sin revelar la solución. Tras corregir se confirma la igualdad completa y se habilita el tiro. El feedback se deriva del estado guardado, por lo que una recarga durante la corrección recupera la misma orientación pedagógica. Cada pregunta concede XP y se registra para repaso una sola vez.
+
 ## Arquitectura
 
 - `dist/core/math.mjs`: operaciones, distractores, pistas y planes reproducibles.
+- `dist/core/learningFeedback.mjs`: mensajes pedagógicos de pista, error, corrección y recuperación.
 - `dist/core/physics.mjs`: trayectoria, geometría y resultado único del tiro.
 - `dist/core/scenarios.mjs`: configuraciones defensivas, texto táctico e instantáneas inmutables.
 - `dist/core/game.mjs`: máquina de estados pura, puntuación y copa.
